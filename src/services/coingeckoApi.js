@@ -52,8 +52,7 @@ export async function searchCoins(query) {
       c.symbol.includes(q) ||
       c.name.toLowerCase().includes(q) ||
       c.id.includes(q)
-    )
-    .slice(0, 50);
+    );
 }
 
 /**

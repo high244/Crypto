@@ -22,6 +22,8 @@ const INDICATORS = [
   { key: 'macd', label: 'MACD' },
 ];
 
+const MIN_SEARCH_LENGTH = 2;
+
 export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe, onTimeframeChange, indicators, onToggleIndicator }) {
   const [searchText, setSearchText] = useState(symbol);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -30,7 +32,6 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
   const [cgResults, setCgResults] = useState([]);
   const [symbolsLoading, setSymbolsLoading] = useState(true);
   const wrapperRef = useRef(null);
-  const searchTimerRef = useRef(null);
 
   // Load Binance symbols once
   useEffect(() => {
@@ -48,42 +49,40 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
     setSearchText(symbol);
   }, [symbol]);
 
-  // Filter Binance symbols + search CoinGecko as user types
+  // Search the complete Binance and CoinGecko catalogs after the user types.
   useEffect(() => {
     const q = searchText.trim().toUpperCase();
-
-    // Filter Binance
-    if (!q) {
-      setFiltered(binanceSymbols.slice(0, 50));
-    } else {
-      setFiltered(
-        binanceSymbols
-          .filter((s) => s.symbol.includes(q) || s.baseAsset.includes(q))
-          .slice(0, 30)
-      );
-    }
-
-    // Debounced CoinGecko search (only when user is typing something)
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (q.length >= 2) {
-      searchTimerRef.current = setTimeout(() => {
-        searchCoins(q)
-          .then((results) => {
-            // Filter out coins that already appear in Binance results
-            const binanceBaseAssets = new Set(
-              binanceSymbols
-                .filter((s) => s.symbol.includes(q) || s.baseAsset.includes(q))
-                .map((s) => s.baseAsset.toLowerCase())
-            );
-            const unique = results.filter((c) => !binanceBaseAssets.has(c.symbol));
-            setCgResults(unique.slice(0, 20));
-          })
-          .catch(() => setCgResults([]));
-      }, 300);
-    } else {
+    if (!showDropdown || q.length < MIN_SEARCH_LENGTH) {
+      setFiltered([]);
       setCgResults([]);
+      return undefined;
     }
-  }, [searchText, binanceSymbols]);
+
+    const binanceMatches = binanceSymbols.filter(
+      (symbol) =>
+        symbol.symbol.includes(q) ||
+        symbol.baseAsset.includes(q) ||
+        symbol.quoteAsset.includes(q)
+    );
+    setFiltered(binanceMatches);
+    setCgResults([]);
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchCoins(q)
+        .then((results) => {
+          if (!cancelled) setCgResults(results);
+        })
+        .catch(() => {
+          if (!cancelled) setCgResults([]);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchText, showDropdown, binanceSymbols]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -131,12 +130,16 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
           }}
           onFocus={() => setShowDropdown(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Search..."
+          placeholder="Search any coin or pair..."
         />
         {showDropdown && (
           <div className="symbol-dropdown">
             {symbolsLoading ? (
               <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>Loading symbols...</div>
+            ) : searchText.trim().length < MIN_SEARCH_LENGTH ? (
+              <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>
+                Type at least 2 characters to search all coins.
+              </div>
             ) : filtered.length === 0 && cgResults.length === 0 ? (
               <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>No results</div>
             ) : (
@@ -145,7 +148,7 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
                 {filtered.length > 0 && (
                   <>
                     <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.5px', borderBottom: '1px solid var(--border)' }}>
-                      BINANCE
+                      BINANCE — {filtered.length.toLocaleString()} pairs
                     </div>
                     {filtered.map((s) => (
                       <div
@@ -166,7 +169,7 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
                 {cgResults.length > 0 && (
                   <>
                     <div style={{ padding: '4px 12px', fontSize: 10, color: '#f7a21b', fontWeight: 600, letterSpacing: '0.5px', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
-                      COINGECKO (other exchanges)
+                      COINGECKO — {cgResults.length.toLocaleString()} coins
                     </div>
                     {cgResults.map((c) => (
                       <div

@@ -46,37 +46,24 @@ export async function fetchDepth(symbol, limit = 20) {
 }
 
 /**
- * Fetch all exchange symbols (for search autocomplete).
- * Uses lightweight ticker/price endpoint (~156KB) instead of exchangeInfo (~17MB).
- * Caches result in memory.
+ * Fetch every actively traded Binance Spot pair for search autocomplete.
+ * exchangeInfo supplies the real base and quote assets, so pairs such as
+ * BTCIDR and MANTAIDR are included too. The result is cached in memory.
  */
 let _symbolsCache = null;
-const QUOTE_ASSETS = ['USDT', 'USDC', 'FDUSD', 'BTC', 'ETH', 'BNB'];
-
-function parseSymbol(symbol) {
-  for (const quote of QUOTE_ASSETS) {
-    if (symbol.endsWith(quote) && symbol.length > quote.length) {
-      return { symbol, baseAsset: symbol.slice(0, -quote.length), quoteAsset: quote };
-    }
-  }
-  return null;
-}
 
 export async function fetchSymbols() {
   if (_symbolsCache) return _symbolsCache;
-  const url = `${BASE}/ticker/price`;
+  const url = `${BASE}/exchangeInfo`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Binance ticker/price HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Binance exchangeInfo HTTP ${res.status}`);
   const data = await res.json();
-  _symbolsCache = data
-    .map((t) => parseSymbol(t.symbol))
-    .filter(Boolean)
+  _symbolsCache = data.symbols
+    .filter((symbol) => symbol.status === 'TRADING')
+    .map(({ symbol, baseAsset, quoteAsset }) => ({ symbol, baseAsset, quoteAsset }))
     .sort((a, b) => {
-      // Prioritize USDT pairs, then alphabetical
-      const aUsdt = a.quoteAsset === 'USDT' ? 0 : 1;
-      const bUsdt = b.quoteAsset === 'USDT' ? 0 : 1;
-      if (aUsdt !== bUsdt) return aUsdt - bUsdt;
-      return a.baseAsset.localeCompare(b.baseAsset);
+      const baseCompare = a.baseAsset.localeCompare(b.baseAsset);
+      return baseCompare || a.quoteAsset.localeCompare(b.quoteAsset);
     });
   return _symbolsCache;
 }
