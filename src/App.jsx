@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Chart from './components/Chart';
 import Toolbar from './components/Toolbar';
 import TickerBar from './components/TickerBar';
@@ -6,24 +6,55 @@ import OrderBook from './components/OrderBook';
 import RecentTrades from './components/RecentTrades';
 import Watchlist from './components/Watchlist';
 import AnalysisPanel from './components/AnalysisPanel';
-import { fetchKlines } from './services/binanceApi';
-import { subscribeKline, subscribeTicker, subscribeTrades, subscribeDepth } from './services/binanceWebSocket';
-import { fetchOHLC, fetchCoinMarketData, findCoinId, timeframeToDays } from './services/coingeckoApi';
-import { fetchBybitKline, fetchOKXKline, parseCSVData } from './services/exchangeApi';
+import { useMarketData } from './hooks/useMarketData';
+import { useChartDrawings } from './hooks/useChartDrawings';
+import { subscribeDepth, subscribeKline, subscribeTicker, subscribeTrades } from './services/binanceWebSocket';
+import { subscribeHyperliquidAssetContext, subscribeHyperliquidCandle } from './services/hyperliquidWebSocket';
+import { parseCSVData } from './services/exchangeApi';
+import { baseAssetFromSymbol, SOURCE_LABELS, toChartCandles } from './services/marketData';
+import { createSampleCandles } from './services/sampleData';
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function tickerFromCandles(candles) {
+  if (!candles.length) return null;
+  const first = candles[0];
+  const last = candles[candles.length - 1];
+  const close = last.close;
+  const change = close - first.open;
+  return {
+    close,
+    open: first.open,
+    high: Math.max(...candles.map((candle) => candle.high)),
+    low: Math.min(...candles.map((candle) => candle.low)),
+    volume: 0,
+    quoteVolume: 0,
+    change,
+    changePct: first.open ? (change / first.open) * 100 : 0,
+  };
+}
+
+function normalizeRequestedSymbol(value) {
+  const compact = value.toUpperCase().replace(/[\s/_-]/g, '');
+  if (!compact) return '';
+  return /(?:USDT|USDC|FDUSD|BUSD|TUSD|USD)$/.test(compact) ? compact : `${compact}USDT`;
+}
 
 export default function App() {
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('1h');
+  const [market, setMarket] = useState('spot');
+  const [coinGeckoId, setCoinGeckoId] = useState(null);
+  const [manualFeed, setManualFeed] = useState(null);
   const [chartData, setChartData] = useState([]);
-  const [chartLoading, setChartLoading] = useState(true);
   const [ticker, setTicker] = useState(null);
+  const [futuresMetrics, setFuturesMetrics] = useState({ fundingRate: null, openInterest: null });
   const [orderBook, setOrderBook] = useState(null);
   const [trades, setTrades] = useState([]);
   const [rightTab, setRightTab] = useState('book');
-  const [error, setError] = useState('');
-  const [dataSource, setDataSource] = useState('binance'); // 'binance' | 'coingecko' | 'bybit' | 'okx' | 'csv'
-  const [exchangeSource, setExchangeSource] = useState('binance'); // toolbar exchange selector
-  const [coinGeckoId, setCoinGeckoId] = useState(null);
   const [indicators, setIndicators] = useState({
     sma7: false,
     sma25: true,
@@ -36,277 +67,249 @@ export default function App() {
   });
 
   const chartRef = useRef(null);
-  const wsCleanupRef = useRef([]);
-  const pollTimerRef = useRef(null);
+  const streamCleanupRef = useRef([]);
+  const isManual = Boolean(manualFeed);
+  const chartDrawings = useChartDrawings(symbol, market);
+  const {
+    data: marketData,
+    activeSource,
+    error: liveError,
+    loading,
+    status,
+    refresh,
+  } = useMarketData(symbol, timeframe, market, {
+    coinGeckoId,
+    enabled: !isManual,
+  });
 
-  const cleanupWS = useCallback(() => {
-    wsCleanupRef.current.forEach((sub) => sub.close());
-    wsCleanupRef.current = [];
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
+  const clearLiveStreams = useCallback(() => {
+    streamCleanupRef.current.forEach((subscription) => subscription.close());
+    streamCleanupRef.current = [];
   }, []);
 
-  // --- BINANCE data loader ---
-  const loadBinanceData = useCallback(
-    async (sym, tf) => {
-      const klines = await fetchKlines(sym, tf, 500);
-      setChartData(klines);
-      setChartLoading(false);
-
-      const klineSub = subscribeKline(sym, tf, (candle) => {
-        if (chartRef.current?.updateCandle) chartRef.current.updateCandle(candle);
-        // Update chartData on every tick for real-time accuracy
-        setChartData((prev) => {
-          const idx = prev.findIndex((d) => d.time === candle.time);
-          if (idx >= 0) {
-            const u = [...prev];
-            u[idx] = candle;
-            return u;
-          }
-          // New candle period started
-          return [...prev, candle];
-        });
-      });
-
-      const tickerSub = subscribeTicker(sym, setTicker);
-      const tradesSub = subscribeTrades(sym, (trade) => {
-        setTrades((prev) => [trade, ...prev].slice(0, 100));
-      });
-      const depthSub = subscribeDepth(sym, setOrderBook);
-
-      wsCleanupRef.current = [klineSub, tickerSub, tradesSub, depthSub];
-    },
-    []
-  );
-
-  // --- COINGECKO data loader ---
-  const loadCoinGeckoData = useCallback(
-    async (cgId, tf) => {
-      const days = timeframeToDays(tf);
-      const ohlc = await fetchOHLC(cgId, days);
-      setChartData(ohlc);
-      setChartLoading(false);
-
-      // Fetch initial ticker data
-      try {
-        const marketData = await fetchCoinMarketData(cgId);
-        setTicker(marketData);
-      } catch (e) {
-        console.error('CoinGecko market data error:', e);
+  const applyLiveCandle = useCallback((candle) => {
+    chartRef.current?.updateCandle(candle);
+    setChartData((previous) => {
+      const index = previous.findIndex((item) => item.time === candle.time);
+      if (index >= 0) {
+        const next = [...previous];
+        next[index] = candle;
+        return next;
       }
+      return [...previous, candle].sort((a, b) => a.time - b.time);
+    });
+  }, []);
 
-      // Poll for updates every 30 seconds (CoinGecko has no WebSocket)
-      pollTimerRef.current = setInterval(async () => {
-        try {
-          const marketData = await fetchCoinMarketData(cgId);
-          setTicker(marketData);
-        } catch (e) { /* ignore poll errors */ }
-      }, 30000);
-    },
-    []
-  );
-
-  // --- BYBIT data loader ---
-  const loadBybitData = useCallback(
-    async (sym, tf) => {
-      const klines = await fetchBybitKline(sym, tf, 200);
-      setChartData(klines);
-      setChartLoading(false);
-      // Bybit has no free WebSocket for browser, so we poll every 15s
-      pollTimerRef.current = setInterval(async () => {
-        try {
-          const fresh = await fetchBybitKline(sym, tf, 200);
-          setChartData(fresh);
-        } catch (e) { /* ignore poll errors */ }
-      }, 15000);
-    },
-    []
-  );
-
-  // --- OKX data loader ---
-  const loadOKXData = useCallback(
-    async (sym, tf) => {
-      const klines = await fetchOKXKline(sym, tf, 200);
-      setChartData(klines);
-      setChartLoading(false);
-      // OKX has no free WebSocket for browser, so we poll every 15s
-      pollTimerRef.current = setInterval(async () => {
-        try {
-          const fresh = await fetchOKXKline(sym, tf, 200);
-          setChartData(fresh);
-        } catch (e) { /* ignore poll errors */ }
-      }, 15000);
-    },
-    []
-  );
-
-  // --- Main data loader ---
-  const loadData = useCallback(
-    async (sym, tf, source, cgId) => {
-      setChartLoading(true);
-      setError('');
-      cleanupWS();
-
-      try {
-        if (source === 'coingecko' && cgId) {
-          await loadCoinGeckoData(cgId, tf);
-        } else if (source === 'bybit') {
-          await loadBybitData(sym, tf);
-        } else if (source === 'okx') {
-          await loadOKXData(sym, tf);
-        } else {
-          await loadBinanceData(sym, tf);
-        }
-      } catch (err) {
-        console.error('Failed to load data:', err);
-        setError(`Gagal memuat data: ${err.message}`);
-        setChartLoading(false);
-      }
-    },
-    [cleanupWS, loadBinanceData, loadCoinGeckoData, loadBybitData, loadOKXData]
-  );
-
-  // Load data when symbol/timeframe/source changes
   useEffect(() => {
-    if (dataSource === 'csv') return; // CSV data is loaded manually
-    setTrades([]);
+    if (isManual || !marketData) return;
+    setChartData(toChartCandles(marketData.candles));
+    setTicker(marketData.ticker || tickerFromCandles(toChartCandles(marketData.candles)));
+    setFuturesMetrics({
+      fundingRate: marketData.fundingRate ?? null,
+      openInterest: marketData.openInterest ?? null,
+    });
+  }, [isManual, marketData]);
+
+  useEffect(() => {
+    if (!manualFeed) return;
+    setChartData(manualFeed.candles);
+    setTicker(tickerFromCandles(manualFeed.candles));
+    setFuturesMetrics({ fundingRate: null, openInterest: null });
     setOrderBook(null);
+    setTrades([]);
+  }, [manualFeed]);
+
+  useEffect(() => {
+    clearLiveStreams();
+    // Never let a previous symbol/source keep writing into the chart while a
+    // replacement request is resolving. This is especially important when a
+    // fallback chain ultimately fails: the empty/error state must not look
+    // like fresh data from the symbol selected just before it.
+    if (isManual || loading || !activeSource) return undefined;
+
+    const subscriptions = [];
+    const streamTimeframe = timeframe === 'all' ? '1d' : timeframe;
+
+    if (activeSource === 'binance-spot' || activeSource === 'binance-futures') {
+      const binanceMarket = activeSource === 'binance-futures' ? 'futures' : 'spot';
+      subscriptions.push(
+        subscribeKline(symbol, streamTimeframe, applyLiveCandle, binanceMarket),
+        subscribeTicker(symbol, setTicker, binanceMarket),
+        subscribeTrades(symbol, (trade) => {
+          setTrades((previous) => [trade, ...previous].slice(0, 100));
+        }, binanceMarket),
+        subscribeDepth(symbol, setOrderBook, binanceMarket),
+      );
+    }
+
+    if (activeSource === 'hyperliquid') {
+      const coin = baseAssetFromSymbol(symbol);
+      subscriptions.push(
+        subscribeHyperliquidCandle(coin, streamTimeframe, applyLiveCandle),
+        subscribeHyperliquidAssetContext(coin, (context) => {
+          const markPrice = finiteNumber(context.markPx);
+          const previousPrice = finiteNumber(context.prevDayPx);
+          const change = markPrice !== null && previousPrice !== null ? markPrice - previousPrice : null;
+          setTicker((previous) => ({
+            ...(previous || {}),
+            close: markPrice ?? previous?.close ?? null,
+            open: previousPrice ?? previous?.open ?? markPrice ?? null,
+            change,
+            changePct: change !== null && previousPrice ? (change / previousPrice) * 100 : previous?.changePct ?? null,
+            volume: finiteNumber(context.dayNtlVlm) ?? previous?.volume ?? null,
+            quoteVolume: finiteNumber(context.dayNtlVlm) ?? previous?.quoteVolume ?? null,
+          }));
+          setFuturesMetrics({
+            fundingRate: finiteNumber(context.funding),
+            openInterest: finiteNumber(context.openInterest) !== null && markPrice !== null
+              ? finiteNumber(context.openInterest) * markPrice
+              : null,
+          });
+        }),
+      );
+    }
+
+    streamCleanupRef.current = subscriptions;
+    return clearLiveStreams;
+  }, [activeSource, applyLiveCandle, clearLiveStreams, isManual, loading, symbol, timeframe]);
+
+  useEffect(() => () => clearLiveStreams(), [clearLiveStreams]);
+
+  useEffect(() => {
+    if (isManual || !activeSource) return undefined;
+    // Futures OI/funding and fallback providers need a small REST refresh even
+    // while the primary price stream is live.
+    const interval = activeSource === 'binance-spot' ? 60_000 : 30_000;
+    const timer = window.setInterval(() => refresh({ silent: true }), interval);
+    return () => window.clearInterval(timer);
+  }, [activeSource, isManual, refresh]);
+
+  const resetLivePanels = useCallback(({ clearChart = false } = {}) => {
+    clearLiveStreams();
+    if (clearChart) setChartData([]);
     setTicker(null);
-    loadData(symbol, timeframe, dataSource, coinGeckoId);
-    return () => cleanupWS();
-  }, [symbol, timeframe, dataSource, coinGeckoId, loadData, cleanupWS]);
+    setOrderBook(null);
+    setTrades([]);
+    setFuturesMetrics({ fundingRate: null, openInterest: null });
+  }, [clearLiveStreams]);
 
-  // Symbol change handler — detects source
-  const handleSymbolChange = useCallback(async (sym, source, cgId) => {
-    if (source === 'coingecko' && cgId) {
-      setSymbol(sym);
-      setDataSource('coingecko');
-      setExchangeSource('binance');
-      setCoinGeckoId(cgId);
-    } else if (source === 'coingecko') {
-      // Manual entry — try to find in CoinGecko
-      const coin = await findCoinId(sym.replace(/USD[TC]?$/, ''));
-      if (coin) {
-        setSymbol(sym);
-        setDataSource('coingecko');
-        setExchangeSource('binance');
-        setCoinGeckoId(coin.id);
-      }
-    } else {
-      setSymbol(sym);
-      setDataSource(exchangeSource);
-      setCoinGeckoId(null);
-    }
-  }, [exchangeSource]);
+  const handleSymbolChange = useCallback((nextSymbol, nextCoinGeckoId = null) => {
+    const normalized = normalizeRequestedSymbol(nextSymbol);
+    if (!normalized) return;
+    setManualFeed(null);
+    setSymbol(normalized);
+    setCoinGeckoId(nextCoinGeckoId);
+    resetLivePanels({ clearChart: true });
+  }, [resetLivePanels]);
 
-  // Exchange source change handler
-  const handleExchangeChange = useCallback((exchange) => {
-    setExchangeSource(exchange);
-    setDataSource(exchange);
-    setCoinGeckoId(null);
-  }, []);
+  const handleMarketChange = useCallback((nextMarket) => {
+    if (nextMarket === market) return;
+    setManualFeed(null);
+    setMarket(nextMarket);
+    resetLivePanels({ clearChart: true });
+  }, [market, resetLivePanels]);
 
-  // Watchlist always uses current exchange
-  const handleWatchlistSelect = useCallback((sym) => {
-    setSymbol(sym);
-    setDataSource(exchangeSource);
-    setCoinGeckoId(null);
-  }, [exchangeSource]);
+  const handleWatchlistSelect = useCallback((nextSymbol) => {
+    handleSymbolChange(nextSymbol);
+  }, [handleSymbolChange]);
 
-  // CSV data load handler
   const handleLoadCSV = useCallback((csvText) => {
-    try {
-      const parsed = parseCSVData(csvText);
-      setChartData(parsed);
-      setDataSource('csv');
-      setChartLoading(false);
-      cleanupWS();
-      setTicker(null);
-      setOrderBook(null);
-      setTrades([]);
-      setError('');
-    } catch (e) {
-      setError(e.message);
-    }
-  }, [cleanupWS]);
+    const parsed = parseCSVData(csvText);
+    setManualFeed({ source: 'csv', candles: parsed });
+    resetLivePanels();
+  }, [resetLivePanels]);
 
-  const handleTimeframeChange = useCallback((tf) => setTimeframe(tf), []);
+  const handleLoadSample = useCallback(() => {
+    const candles = createSampleCandles(symbol, timeframe);
+    setManualFeed({ source: 'sample', candles });
+    resetLivePanels();
+  }, [symbol, timeframe, resetLivePanels]);
+
+  const handleTimeframeChange = useCallback((nextTimeframe) => {
+    if (nextTimeframe === timeframe) return;
+    setTimeframe(nextTimeframe);
+    if (!isManual) resetLivePanels({ clearChart: true });
+  }, [isManual, resetLivePanels, timeframe]);
   const handleToggleIndicator = useCallback((key) => {
-    setIndicators((prev) => ({ ...prev, [key]: !prev[key] }));
+    setIndicators((previous) => ({ ...previous, [key]: !previous[key] }));
   }, []);
 
-  const isBinanceWS = dataSource === 'binance';
-
-  // Determine source label for header
-  const sourceLabels = {
-    binance: 'Binance',
-    bybit: 'Bybit',
-    okx: 'OKX',
-    coingecko: 'CoinGecko',
-    csv: 'CSV Import',
-  };
+  const visibleSource = manualFeed?.source || activeSource;
+  const sourceLabel = SOURCE_LABELS[visibleSource] || '—';
+  const displayError = !isManual ? liveError : '';
+  const hasBinancePanels = !isManual && (
+    activeSource === 'binance-spot' || activeSource === 'binance-futures'
+  );
 
   return (
     <div className="app-layout">
-      {/* Header */}
       <header className="app-header">
         <div className="logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
             <polyline points="16 7 22 7 22 13" />
           </svg>
-          CryptoView
+          CONFLUX
         </div>
-        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-          Real-time market data • {sourceLabels[dataSource] || 'Binance'} + CoinGecko
+        <span className="header-context">
+          Analisis {market === 'futures' ? 'Futures / Perpetual' : 'Spot'} · {sourceLabel}
         </span>
-        {error && (
-          <span style={{ color: 'var(--red)', fontSize: 11, marginLeft: 'auto' }}>⚠ {error}</span>
-        )}
+        {displayError && <span className="app-error">⚠ {displayError}</span>}
       </header>
 
-      {/* Left — Watchlist */}
       <div className="panel">
-        <Watchlist activeSymbol={symbol} onSelect={handleWatchlistSelect} />
+        <Watchlist activeSymbol={symbol} onSelect={handleWatchlistSelect} market={market} />
       </div>
 
-      {/* Center — Chart */}
       <div className="center-column">
-        <TickerBar ticker={ticker} />
+        <TickerBar
+          ticker={ticker}
+          market={market}
+          fundingRate={futuresMetrics.fundingRate}
+          openInterest={futuresMetrics.openInterest}
+        />
         <Toolbar
           symbol={symbol}
-          dataSource={dataSource}
+          activeSource={visibleSource}
+          market={market}
+          onMarketChange={handleMarketChange}
           onSymbolChange={handleSymbolChange}
           timeframe={timeframe}
           onTimeframeChange={handleTimeframeChange}
           indicators={indicators}
           onToggleIndicator={handleToggleIndicator}
-          exchangeSource={exchangeSource}
-          onExchangeChange={handleExchangeChange}
         />
-        <Chart ref={chartRef} data={chartData} indicators={indicators} loading={chartLoading} />
+        <Chart
+          ref={chartRef}
+          data={chartData}
+          indicators={indicators}
+          loading={!isManual && loading}
+          loadingProgress={!isManual ? status : ''}
+          emptyMessage={displayError ? 'Sumber live tidak tersedia. Buka Analysis → CSV untuk import atau tampilkan data contoh.' : ''}
+          {...chartDrawings}
+        />
       </div>
 
-      {/* Right — Order Book + Trades + Analysis */}
-      <div className="panel" style={{ borderRight: 'none', borderLeft: '1px solid var(--border)' }}>
+      <div className="panel right-panel">
         <div className="right-panel-tabs">
           <button
             className={`right-panel-tab ${rightTab === 'book' ? 'active' : ''}`}
             onClick={() => setRightTab('book')}
+            type="button"
           >
             Order Book
           </button>
           <button
             className={`right-panel-tab ${rightTab === 'trades' ? 'active' : ''}`}
             onClick={() => setRightTab('trades')}
+            type="button"
           >
             Trades
           </button>
           <button
             className={`right-panel-tab ${rightTab === 'analysis' ? 'active' : ''}`}
             onClick={() => setRightTab('analysis')}
+            type="button"
           >
             Analysis
           </button>
@@ -315,15 +318,14 @@ export default function App() {
           {rightTab === 'analysis' ? (
             <AnalysisPanel
               chartData={chartData}
-              indicators={indicators}
-              dataSource={dataSource}
               onLoadCSV={handleLoadCSV}
+              onLoadSample={handleLoadSample}
             />
-          ) : !isBinanceWS ? (
-            <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', lineHeight: 1.6 }}>
-              <div style={{ fontSize: 20, marginBottom: 8 }}>📊</div>
-              Order book & trades tidak tersedia untuk {sourceLabels[dataSource] || dataSource}.
-              <br />Fitur ini hanya tersedia untuk Binance (real-time WebSocket).
+          ) : !hasBinancePanels ? (
+            <div className="market-panel-message">
+              <div className="market-panel-message-icon">◫</div>
+              Order book dan trades hanya ditampilkan saat sumber aktif adalah Binance Spot/Futures.
+              <br />Chart tetap berjalan dengan {sourceLabel} bila tersedia.
             </div>
           ) : rightTab === 'book' ? (
             <OrderBook data={orderBook} />

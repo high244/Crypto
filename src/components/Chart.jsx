@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import {
   createChart,
   ColorType,
@@ -9,6 +9,7 @@ import {
   LineStyle,
 } from 'lightweight-charts';
 import { calcSMA, calcEMA, calcBollingerBands, calcRSI, calcMACD, calcParabolicSAR } from '../utils/indicators';
+import ChartDrawingOverlay from './ChartDrawingOverlay';
 
 const INDICATOR_COLORS = {
   sma7: '#f7a21b',
@@ -23,12 +24,36 @@ const INDICATOR_COLORS = {
   signal: '#ff6d00',
 };
 
-const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
+const NOOP = () => {};
+
+const Chart = forwardRef(function Chart({
+  data,
+  indicators,
+  loading,
+  loadingProgress,
+  emptyMessage,
+  drawingScope,
+  drawings = [],
+  drawingMode = 'select',
+  selectedDrawingId = null,
+  onDrawingModeChange = NOOP,
+  onAddDrawing = NOOP,
+  onSelectDrawing = NOOP,
+  onDeleteDrawing = NOOP,
+  onUndoDrawing = NOOP,
+  onRedoDrawing = NOOP,
+  onDeleteSelectedDrawing = NOOP,
+  onClearDrawings = NOOP,
+  canUndoDrawing = false,
+  canRedoDrawing = false,
+}, ref) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
   const volumeSeriesRef = useRef(null);
   const indicatorSeriesRef = useRef({});
+  const [drawingApi, setDrawingApi] = useState({ chart: null, series: null });
+  const [drawingApiVersion, setDrawingApiVersion] = useState(0);
 
   // Expose updateCandle to parent via ref
   useImperativeHandle(ref, () => ({
@@ -46,7 +71,7 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
         volumeSeriesRef.current.update({
           time: candle.time,
           value: candle.volume,
-          color: candle.close >= candle.open ? 'rgba(38, 166, 154, 0.35)' : 'rgba(239, 83, 80, 0.35)',
+          color: candle.close >= candle.open ? 'rgba(63, 167, 150, 0.35)' : 'rgba(224, 108, 92, 0.35)',
         });
       }
     },
@@ -61,32 +86,32 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
       width: container.clientWidth,
       height: container.clientHeight,
       layout: {
-        background: { type: ColorType.Solid, color: '#131722' },
-        textColor: '#d1d4dc',
-        fontFamily: "'Inter', sans-serif",
+        background: { type: ColorType.Solid, color: '#1C2029' },
+        textColor: '#E8E6DF',
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace",
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.6)' },
-        horzLines: { color: 'rgba(42, 46, 57, 0.6)' },
+        vertLines: { color: 'rgba(42, 47, 59, 0.5)' },
+        horzLines: { color: 'rgba(42, 47, 59, 0.5)' },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: 'rgba(41, 98, 255, 0.4)',
-          labelBackgroundColor: '#2962ff',
+          color: 'rgba(232, 163, 61, 0.4)',
+          labelBackgroundColor: '#E8A33D',
         },
         horzLine: {
-          color: 'rgba(41, 98, 255, 0.4)',
-          labelBackgroundColor: '#2962ff',
+          color: 'rgba(232, 163, 61, 0.4)',
+          labelBackgroundColor: '#E8A33D',
         },
       },
       rightPriceScale: {
-        borderColor: '#2a2e39',
+        borderColor: '#2A2F3B',
         scaleMargins: { top: 0.1, bottom: 0.25 },
       },
       timeScale: {
-        borderColor: '#2a2e39',
+        borderColor: '#2A2F3B',
         timeVisible: true,
         secondsVisible: false,
       },
@@ -95,12 +120,12 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
 
     // Candlestick series (v5 API)
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderDownColor: '#ef5350',
-      borderUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-      wickUpColor: '#26a69a',
+      upColor: '#3FA796',
+      downColor: '#E06C5C',
+      borderDownColor: '#E06C5C',
+      borderUpColor: '#3FA796',
+      wickDownColor: '#E06C5C',
+      wickUpColor: '#3FA796',
     });
 
     // Volume series (v5 API)
@@ -116,6 +141,12 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+    setDrawingApi((previous) => (
+      previous.chart === chart && previous.series === candleSeries
+        ? previous
+        : { chart, series: candleSeries }
+    ));
+    setDrawingApiVersion((previous) => previous + 1);
 
     // Responsive resize
     const ro = new ResizeObserver((entries) => {
@@ -123,6 +154,7 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
         const { width, height } = entry.contentRect;
         if (width > 0 && height > 0) {
           chart.applyOptions({ width, height });
+          setDrawingApiVersion((previous) => previous + 1);
         }
       }
     });
@@ -135,6 +167,9 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
       indicatorSeriesRef.current = {};
+      setDrawingApi((previous) => (
+        previous.chart === chart ? { chart: null, series: null } : previous
+      ));
     };
   }, []);
 
@@ -149,13 +184,14 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
       data.map((d) => ({
         time: d.time,
         value: d.volume,
-        color: d.close >= d.open ? 'rgba(38, 166, 154, 0.35)' : 'rgba(239, 83, 80, 0.35)',
+        color: d.close >= d.open ? 'rgba(63, 167, 150, 0.35)' : 'rgba(224, 108, 92, 0.35)',
       }))
     );
 
     // Auto-fit to content
     if (chartRef.current) {
       chartRef.current.timeScale().fitContent();
+      setDrawingApiVersion((previous) => previous + 1);
     }
   }, [data]);
 
@@ -166,7 +202,7 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
 
     // Remove old indicator series
     Object.values(indicatorSeriesRef.current).forEach((s) => {
-      try { chart.removeSeries(s); } catch (e) { /* ignore */ }
+      try { chart.removeSeries(s); } catch { /* ignore */ }
     });
     indicatorSeriesRef.current = {};
 
@@ -269,7 +305,7 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
       const downF = sarDown.filter(Boolean);
       if (upF.length) {
         const su = chart.addSeries(LineSeries, {
-          color: '#26a69a',
+          color: '#3FA796',
           lineWidth: 0,
           pointMarkersVisible: true,
           pointMarkersRadius: 2.5,
@@ -282,7 +318,7 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
       }
       if (downF.length) {
         const sd = chart.addSeries(LineSeries, {
-          color: '#ef5350',
+          color: '#E06C5C',
           lineWidth: 0,
           pointMarkersVisible: true,
           pointMarkersRadius: 2.5,
@@ -294,19 +330,43 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
         indicatorSeriesRef.current.sarDown = sd;
       }
     }
+    setDrawingApiVersion((previous) => previous + 1);
   }, [data, indicators]);
 
   return (
-    <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+    <div className="chart-workspace" style={{ flex: 1, position: 'relative', minHeight: 0 }}>
       {loading && (
         <div className="chart-loading">
           <div className="spinner" />
-          Loading chart data...
+          {loadingProgress || 'Loading chart data...'}
+          {loadingProgress && <div className="loading-progress">{loadingProgress}</div>}
         </div>
+      )}
+      {!loading && !data?.length && emptyMessage && (
+        <div className="chart-empty">{emptyMessage}</div>
       )}
       <div
         ref={containerRef}
         style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}
+      />
+      <ChartDrawingOverlay
+        chart={drawingApi.chart}
+        series={drawingApi.series}
+        apiVersion={drawingApiVersion}
+        drawingScope={drawingScope}
+        drawings={drawings}
+        mode={drawingMode}
+        selectedDrawingId={selectedDrawingId}
+        onModeChange={onDrawingModeChange}
+        onAddDrawing={onAddDrawing}
+        onSelectDrawing={onSelectDrawing}
+        onDeleteDrawing={onDeleteDrawing}
+        onUndo={onUndoDrawing}
+        onRedo={onRedoDrawing}
+        onDeleteSelected={onDeleteSelectedDrawing}
+        onClear={onClearDrawings}
+        canUndo={canUndoDrawing}
+        canRedo={canRedoDrawing}
       />
     </div>
   );

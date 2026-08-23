@@ -1,16 +1,31 @@
-# React + Vite
+# CONFLUX
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Dashboard analisis crypto React untuk pasar Spot dan Futures/Perpetual.
 
-Currently, two official plugins are available:
+## Data market
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Semua permintaan pasar melewati `useMarketData(symbol, timeframe, market)` dan dinormalisasi ke satu kontrak candle sebelum chart dipakai.
 
-## React Compiler
+| Mode | Urutan fallback |
+| --- | --- |
+| Spot | Binance Spot → CoinGecko |
+| Futures / Perpetual | Binance Futures → CoinGecko Derivatives → Hyperliquid |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Setiap sumber diberi batas waktu singkat. Badge di toolbar menunjukkan sumber aktif; sumber Binance dan Hyperliquid memakai WebSocket untuk pembaruan live. Saat seluruh sumber tidak tersedia, data CSV manual dan data contoh tetap bisa dipakai dari tab **Analysis → CSV**.
 
-## Expanding the Oxlint configuration
+Bybit dan OKX sengaja tidak dipanggil langsung dari browser karena tidak menjadi sumber REST client-side yang andal tanpa backend proxy.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Menjalankan lokal
+
+```bash
+npm install
+npm run dev
+```
+
+## Build GitHub Pages
+
+```bash
+npm run build
+```
+
+Vite menulis hasil build ke folder `docs/`, sesuai konfigurasi GitHub Pages repository ini.

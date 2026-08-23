@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { calcParabolicSAR } from '../utils/indicators';
 
 /**
  * AnalysisPanel — Integrated analysis with 4 tabs:
@@ -11,7 +12,7 @@ import { useState, useCallback, useMemo } from 'react';
 // The AI analysis features call Anthropic's API. The user can enter their key in the UI.
 // If no key is provided, a helpful message is shown instead of making API calls.
 
-export default function AnalysisPanel({ chartData, indicators, dataSource, onLoadCSV }) {
+export default function AnalysisPanel({ chartData, onLoadCSV, onLoadSample }) {
   const [activeTab, setActiveTab] = useState('sentiment');
 
   // --- Sentiment state ---
@@ -36,12 +37,14 @@ export default function AnalysisPanel({ chartData, indicators, dataSource, onLoa
 
   // --- Technical trend from Parabolic SAR ---
   const techTrend = useMemo(() => {
-    if (!chartData?.length || !indicators?.sar) return null;
-    // We can't compute SAR here without the indicator data,
-    // but we can check the last candle's relationship with its SMA
-    // The real SAR trend will be passed via a prop if available
+    if (!chartData?.length || chartData.length < 2) return null;
+    // Always compute SAR to determine trend for composite summary
+    const { sarUp, sarDown } = calcParabolicSAR(chartData);
+    const lastIdx = chartData.length - 1;
+    if (sarUp[lastIdx]) return 'bullish';
+    if (sarDown[lastIdx]) return 'bearish';
     return null;
-  }, [chartData, indicators]);
+  }, [chartData]);
 
   // --- Sentiment Analysis ---
   const analyzeSentiment = useCallback(async () => {
@@ -335,6 +338,14 @@ export default function AnalysisPanel({ chartData, indicators, dataSource, onLoa
             <button className="analysis-btn" onClick={handleLoadCSV}>
               Muat Data CSV
             </button>
+            {onLoadSample && (
+              <button className="analysis-btn analysis-btn-secondary" onClick={onLoadSample}>
+                Tampilkan Data Contoh
+              </button>
+            )}
+            <p className="analysis-desc" style={{ marginTop: 8, marginBottom: 0 }}>
+              Data contoh berguna saat koneksi sumber live tidak tersedia; CSV dan data contoh tidak menghapus pilihan Spot/Futures.
+            </p>
             {csvError && <div className="analysis-error">{csvError}</div>}
           </div>
         )}

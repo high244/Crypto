@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CONFLUX">
+  <rect width="64" height="64" rx="14" fill="#12141A"/>
+  <path d="M13 49Q25 27 37 15" fill="none" stroke="#3FA796" stroke-linecap="round" stroke-width="6"/>
+  <path d="M37 50V15" fill="none" stroke="#E8E6DF" stroke-linecap="round" stroke-width="6"/>
+  <path d="M51 49Q43 28 37 15" fill="none" stroke="#E06C5C" stroke-linecap="round" stroke-width="6"/>
+  <circle cx="37" cy="15" r="5" fill="#E8A33D"/>
+</svg>

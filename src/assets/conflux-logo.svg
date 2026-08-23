@@ -1,0 +1,10 @@
+<svg viewBox="0 0 620 200" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(20,20)">
+    <path d="M10,140 Q40,60 80,20" fill="none" stroke="#3FA796" stroke-width="7" stroke-linecap="round"/>
+    <path d="M80,150 L80,20" fill="none" stroke="#E8E6DF" stroke-width="7" stroke-linecap="round"/>
+    <path d="M150,140 Q120,60 80,20" fill="none" stroke="#E06C5C" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="80" cy="20" r="7" fill="#E8A33D"/>
+  </g>
+  <text x="210" y="98" font-family="Georgia, 'Times New Roman', serif" font-size="56" font-weight="700" fill="#E8E6DF" letter-spacing="2">CONFLUX</text>
+  <text x="212" y="128" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="14" fill="#8B90A0" letter-spacing="3">TEKNIKAL &#183; SENTIMEN &#183; FUNDAMENTAL</text>
+</svg>

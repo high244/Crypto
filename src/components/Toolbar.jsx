@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSymbols } from '../services/binanceApi';
+import { fetchFuturesSymbols } from '../services/binanceFuturesApi';
 import { searchAllCoins, searchCoins } from '../services/coingeckoApi';
+import { LIVE_SOURCES, SOURCE_LABELS } from '../services/marketData';
 
 const TIMEFRAMES = [
   { label: '1m', value: '1m' },
@@ -10,6 +12,7 @@ const TIMEFRAMES = [
   { label: '4H', value: '4h' },
   { label: '1D', value: '1d' },
   { label: '1W', value: '1w' },
+  { label: 'ALL', value: 'all' },
 ];
 
 const INDICATORS = [
@@ -24,6 +27,7 @@ const INDICATORS = [
 ];
 
 const MIN_SEARCH_LENGTH = 2;
+const MAX_VISIBLE_RESULTS = 60;
 
 function mergeCoinResults(...resultLists) {
   const seenIds = new Set();
@@ -34,13 +38,17 @@ function mergeCoinResults(...resultLists) {
   });
 }
 
-const EXCHANGES = [
-  { key: 'binance', label: 'Binance', color: 'var(--green)' },
-  { key: 'bybit', label: 'Bybit', color: 'var(--yellow)' },
-  { key: 'okx', label: 'OKX', color: 'var(--cyan)' },
-];
-
-export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe, onTimeframeChange, indicators, onToggleIndicator, exchangeSource, onExchangeChange }) {
+export default function Toolbar({
+  symbol,
+  activeSource,
+  market,
+  onMarketChange,
+  onSymbolChange,
+  timeframe,
+  onTimeframeChange,
+  indicators,
+  onToggleIndicator,
+}) {
   const [searchText, setSearchText] = useState(symbol);
   const [showDropdown, setShowDropdown] = useState(false);
   const [binanceSymbols, setBinanceSymbols] = useState([]);
@@ -49,173 +57,168 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
   const [symbolsLoading, setSymbolsLoading] = useState(true);
   const wrapperRef = useRef(null);
 
-  // Load Binance symbols once
-  useEffect(() => {
-    setSymbolsLoading(true);
-    fetchSymbols()
-      .then((syms) => {
-        setBinanceSymbols(syms);
-        setSymbolsLoading(false);
-      })
-      .catch(() => setSymbolsLoading(false));
-  }, []);
+  const binanceLabel = market === 'futures' ? 'BINANCE FUTURES' : 'BINANCE SPOT';
+  const badgeLabel = activeSource ? SOURCE_LABELS[activeSource] : 'Menghubungkan';
+  const badgeState = !activeSource
+    ? 'loading'
+    : activeSource === 'csv' || activeSource === 'sample'
+      ? 'manual'
+      : LIVE_SOURCES.has(activeSource) ? 'live' : 'polling';
 
-  // Update search text when symbol changes externally
+  useEffect(() => {
+    let cancelled = false;
+    setSymbolsLoading(true);
+    setBinanceSymbols([]);
+
+    const loadSymbols = market === 'futures' ? fetchFuturesSymbols : fetchSymbols;
+    loadSymbols()
+      .then((symbols) => {
+        if (!cancelled) setBinanceSymbols(symbols);
+      })
+      .catch(() => {
+        if (!cancelled) setBinanceSymbols([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSymbolsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [market]);
+
   useEffect(() => {
     setSearchText(symbol);
   }, [symbol]);
 
-  // Search the complete Binance and CoinGecko catalogs after the user types.
   useEffect(() => {
-    const q = searchText.trim().toUpperCase();
-    if (!showDropdown || q.length < MIN_SEARCH_LENGTH) {
+    const query = searchText.trim().toUpperCase();
+    if (!showDropdown || query.length < MIN_SEARCH_LENGTH) {
       setFiltered([]);
       setCgResults([]);
       return undefined;
     }
 
-    const binanceMatches = binanceSymbols.filter(
-      (symbol) =>
-        symbol.symbol.includes(q) ||
-        symbol.baseAsset.includes(q) ||
-        symbol.quoteAsset.includes(q)
+    setFiltered(
+      binanceSymbols.filter((item) => (
+        item.symbol.includes(query)
+        || item.baseAsset.includes(query)
+        || item.quoteAsset.includes(query)
+      )).slice(0, MAX_VISIBLE_RESULTS)
     );
-    setFiltered(binanceMatches);
     setCgResults([]);
 
     let cancelled = false;
     let instantResults = [];
     let catalogResults = [];
     const updateCoinGeckoResults = () => {
-      if (!cancelled) setCgResults(mergeCoinResults(instantResults, catalogResults));
+      if (!cancelled) {
+        setCgResults(mergeCoinResults(instantResults, catalogResults).slice(0, MAX_VISIBLE_RESULTS));
+      }
     };
+
     const timer = setTimeout(() => {
-      searchCoins(q)
+      searchCoins(query)
         .then((results) => {
           instantResults = results;
           updateCoinGeckoResults();
         })
-        .catch(() => {
-          updateCoinGeckoResults();
-        });
+        .catch(updateCoinGeckoResults);
 
-      searchAllCoins(q)
+      searchAllCoins(query)
         .then((results) => {
           catalogResults = results;
           updateCoinGeckoResults();
         })
-        .catch(() => {
-          updateCoinGeckoResults();
-        });
+        .catch(updateCoinGeckoResults);
     }, 250);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [searchText, showDropdown, binanceSymbols]);
+  }, [binanceSymbols, searchText, showDropdown]);
 
-  // Close dropdown on outside click
   useEffect(() => {
-    function handleClick(e) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+    const closeOnOutsideClick = (event) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
         setShowDropdown(false);
       }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
   }, []);
 
-  const handleSelect = useCallback(
-    (sym, source = 'binance', coinId = null) => {
-      onSymbolChange(sym, source, coinId);
-      setSearchText(sym);
-      setShowDropdown(false);
-    },
-    [onSymbolChange]
-  );
+  const selectSymbol = useCallback((nextSymbol, coinGeckoId = null) => {
+    onSymbolChange(nextSymbol, coinGeckoId);
+    setSearchText(nextSymbol);
+    setShowDropdown(false);
+  }, [onSymbolChange]);
 
-  const handleKeyDown = useCallback(
-    (e) => {
-      if (e.key === 'Enter') {
-        const val = searchText.toUpperCase().trim();
-        if (val) {
-          onSymbolChange(val);
-          setShowDropdown(false);
-        }
-      }
-    },
-    [searchText, onSymbolChange]
-  );
+  const handleKeyDown = useCallback((event) => {
+    if (event.key !== 'Enter') return;
+    const nextSymbol = searchText.toUpperCase().trim();
+    if (nextSymbol) selectSymbol(nextSymbol);
+  }, [searchText, selectSymbol]);
 
   return (
     <div className="toolbar">
-      {/* Symbol search */}
       <div className="symbol-search-wrapper" ref={wrapperRef}>
         <input
           className="symbol-search"
           value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
+          onChange={(event) => {
+            setSearchText(event.target.value);
             setShowDropdown(true);
           }}
           onFocus={() => setShowDropdown(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Search any coin or pair..."
+          placeholder="Cari coin atau pair…"
+          aria-label="Cari simbol crypto"
         />
         {showDropdown && (
           <div className="symbol-dropdown">
             {symbolsLoading && filtered.length === 0 && cgResults.length === 0 ? (
-              <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>
-                Loading Binance pairs and global coins...
-              </div>
+              <div className="symbol-item symbol-message">Memuat pair dan katalog coin…</div>
             ) : searchText.trim().length < MIN_SEARCH_LENGTH ? (
-              <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>
-                Type at least 2 characters to search all coins.
-              </div>
+              <div className="symbol-item symbol-message">Ketik minimal 2 karakter.</div>
             ) : filtered.length === 0 && cgResults.length === 0 ? (
-              <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>No results</div>
+              <div className="symbol-item symbol-message">Tidak ada hasil.</div>
             ) : (
               <>
-                {/* Binance results */}
                 {filtered.length > 0 && (
                   <>
-                    <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.5px', borderBottom: '1px solid var(--border)' }}>
-                      BINANCE — {filtered.length.toLocaleString()} pairs
-                    </div>
-                    {filtered.map((s) => (
-                      <div
-                        key={s.symbol}
+                    <div className="symbol-source-heading">{binanceLabel}</div>
+                    {filtered.map((item) => (
+                      <button
+                        key={item.symbol}
                         className="symbol-item"
-                        onClick={() => handleSelect(s.symbol, 'binance')}
+                        onClick={() => selectSymbol(item.symbol)}
+                        type="button"
                       >
                         <span className="symbol-item-name">
-                          {s.baseAsset}
-                          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/{s.quoteAsset}</span>
+                          {item.baseAsset}<span className="symbol-item-quote">/{item.quoteAsset}</span>
                         </span>
-                        <span className="symbol-item-pair">{s.symbol}</span>
-                      </div>
+                        <span className="symbol-item-pair">{item.symbol}</span>
+                      </button>
                     ))}
                   </>
                 )}
-                {/* CoinGecko results */}
                 {cgResults.length > 0 && (
                   <>
-                    <div style={{ padding: '4px 12px', fontSize: 10, color: '#f7a21b', fontWeight: 600, letterSpacing: '0.5px', borderBottom: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
-                      COINGECKO — {cgResults.length.toLocaleString()} coins
-                    </div>
-                    {cgResults.map((c) => (
-                      <div
-                        key={c.id}
+                    <div className="symbol-source-heading coingecko">COINGECKO</div>
+                    {cgResults.map((coin) => (
+                      <button
+                        key={coin.id}
                         className="symbol-item"
-                        onClick={() => handleSelect(c.symbol.toUpperCase() + 'USD', 'coingecko', c.id)}
+                        onClick={() => selectSymbol(`${coin.symbol.toUpperCase()}USD`, coin.id)}
+                        type="button"
                       >
                         <span className="symbol-item-name">
-                          {c.symbol.toUpperCase()}
-                          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>/USD</span>
+                          {coin.symbol.toUpperCase()}<span className="symbol-item-quote">/USD</span>
                         </span>
-                        <span className="symbol-item-pair" style={{ color: '#f7a21b' }}>{c.name}</span>
-                      </div>
+                        <span className="symbol-item-pair coingecko">{coin.name}</span>
+                      </button>
                     ))}
                   </>
                 )}
@@ -225,62 +228,55 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
         )}
       </div>
 
-      {/* Data source badge */}
-      {dataSource && (
-        <span style={{
-          fontSize: 10,
-          padding: '2px 6px',
-          borderRadius: 3,
-          background: dataSource === 'binance' ? 'rgba(38, 166, 154, 0.15)' : 'rgba(247, 162, 27, 0.15)',
-          color: dataSource === 'binance' ? 'var(--green)' : '#f7a21b',
-          fontWeight: 600,
-        }}>
-          {dataSource === 'binance' ? 'Binance' : 'CoinGecko'}
-        </span>
-      )}
+      <span className={`source-badge ${badgeState}`} title="Sumber data aktif">
+        Sumber data: {badgeLabel}{activeSource && ` (${badgeState})`}
+      </span>
 
       <div className="toolbar-divider" />
 
-      {/* Timeframes */}
+      <div className="toolbar-group market-toggle" aria-label="Jenis pasar">
+        <button
+          className={`toolbar-btn ${market === 'spot' ? 'active' : ''}`}
+          onClick={() => onMarketChange('spot')}
+          type="button"
+        >
+          Spot
+        </button>
+        <button
+          className={`toolbar-btn ${market === 'futures' ? 'active' : ''}`}
+          onClick={() => onMarketChange('futures')}
+          type="button"
+        >
+          Futures
+        </button>
+      </div>
+
+      <div className="toolbar-divider" />
+
       <div className="toolbar-group">
-        {TIMEFRAMES.map((tf) => (
+        {TIMEFRAMES.map((item) => (
           <button
-            key={tf.value}
-            className={`toolbar-btn ${timeframe === tf.value ? 'active' : ''}`}
-            onClick={() => onTimeframeChange(tf.value)}
+            key={item.value}
+            className={`toolbar-btn ${timeframe === item.value ? 'active' : ''}`}
+            onClick={() => onTimeframeChange(item.value)}
+            type="button"
           >
-            {tf.label}
+            {item.label}
           </button>
         ))}
       </div>
 
       <div className="toolbar-divider" />
 
-      {/* Indicators */}
       <div className="toolbar-group">
-        {INDICATORS.map((ind) => (
+        {INDICATORS.map((indicator) => (
           <button
-            key={ind.key}
-            className={`toolbar-btn ${indicators[ind.key] ? 'indicator-active' : ''}`}
-            onClick={() => onToggleIndicator(ind.key)}
+            key={indicator.key}
+            className={`toolbar-btn ${indicators[indicator.key] ? 'indicator-active' : ''}`}
+            onClick={() => onToggleIndicator(indicator.key)}
+            type="button"
           >
-            {ind.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="toolbar-divider" />
-
-      {/* Exchange Source */}
-      <div className="toolbar-group">
-        {EXCHANGES.map((ex) => (
-          <button
-            key={ex.key}
-            className={`toolbar-btn ${exchangeSource === ex.key ? 'exchange-active' : ''}`}
-            onClick={() => onExchangeChange(ex.key)}
-            style={exchangeSource === ex.key ? { color: ex.color, borderColor: ex.color } : {}}
-          >
-            {ex.label}
+            {indicator.label}
           </button>
         ))}
       </div>

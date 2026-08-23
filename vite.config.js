@@ -24,16 +24,16 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/coingecko-api/, ''),
         secure: true,
       },
-      '/bybit-api': {
-        target: 'https://api.bybit.com',
+      '/binance-futures-api': {
+        target: 'https://fapi.binance.com',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/bybit-api/, ''),
+        rewrite: (path) => path.replace(/^\/binance-futures-api/, ''),
         secure: true,
       },
-      '/okx-api': {
-        target: 'https://www.okx.com',
+      '/hyperliquid-api': {
+        target: 'https://api.hyperliquid.xyz',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/okx-api/, ''),
+        rewrite: (path) => path.replace(/^\/hyperliquid-api/, ''),
         secure: true,
       },
     },

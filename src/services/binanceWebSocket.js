@@ -1,18 +1,20 @@
 // Binance WebSocket service — connects directly (no CORS issues for WS)
-const WS_BASE = 'wss://stream.binance.com:9443/ws';
+const SPOT_WS_BASE = 'wss://stream.binance.com:9443/ws';
+const FUTURES_WS_BASE = 'wss://fstream.binance.com/ws';
 
 /**
  * Creates a managed WebSocket connection with auto-reconnect.
  * Returns an object with a `close()` method to cleanup.
  */
-function createStream(endpoint, onMessage, onError) {
+function createStream(endpoint, onMessage, onError, market = 'spot') {
   let ws = null;
   let closed = false;
   let reconnectTimer = null;
 
   function connect() {
     if (closed) return;
-    ws = new WebSocket(`${WS_BASE}/${endpoint}`);
+    const base = market === 'futures' ? FUTURES_WS_BASE : SPOT_WS_BASE;
+    ws = new WebSocket(`${base}/${endpoint}`);
 
     ws.onmessage = (event) => {
       try {
@@ -56,7 +58,7 @@ function createStream(endpoint, onMessage, onError) {
  * @param {function} callback receives {time, open, high, low, close, volume, isClosed}
  * @returns {{close: function}} cleanup handle
  */
-export function subscribeKline(symbol, interval, callback) {
+export function subscribeKline(symbol, interval, callback, market = 'spot') {
   const sym = symbol.toLowerCase();
   return createStream(`${sym}@kline_${interval}`, (data) => {
     const k = data.k;
@@ -69,7 +71,7 @@ export function subscribeKline(symbol, interval, callback) {
       volume: parseFloat(k.v),
       isClosed: k.x,
     });
-  });
+  }, undefined, market);
 }
 
 /**
@@ -78,7 +80,7 @@ export function subscribeKline(symbol, interval, callback) {
  * @param {function} callback receives {symbol, close, open, high, low, volume, quoteVolume, change, changePct}
  * @returns {{close: function}}
  */
-export function subscribeTicker(symbol, callback) {
+export function subscribeTicker(symbol, callback, market = 'spot') {
   const sym = symbol.toLowerCase();
   return createStream(`${sym}@ticker`, (data) => {
     callback({
@@ -92,7 +94,7 @@ export function subscribeTicker(symbol, callback) {
       change: parseFloat(data.p),
       changePct: parseFloat(data.P),
     });
-  });
+  }, undefined, market);
 }
 
 /**
@@ -101,7 +103,7 @@ export function subscribeTicker(symbol, callback) {
  * @param {function} callback receives {id, price, qty, time, isBuyerMaker}
  * @returns {{close: function}}
  */
-export function subscribeTrades(symbol, callback) {
+export function subscribeTrades(symbol, callback, market = 'spot') {
   const sym = symbol.toLowerCase();
   return createStream(`${sym}@aggTrade`, (data) => {
     callback({
@@ -111,7 +113,7 @@ export function subscribeTrades(symbol, callback) {
       time: data.T,
       isBuyerMaker: data.m,
     });
-  });
+  }, undefined, market);
 }
 
 /**
@@ -120,12 +122,12 @@ export function subscribeTrades(symbol, callback) {
  * @param {function} callback receives {bids: [[price, qty]], asks: [[price, qty]]}
  * @returns {{close: function}}
  */
-export function subscribeDepth(symbol, callback) {
+export function subscribeDepth(symbol, callback, market = 'spot') {
   const sym = symbol.toLowerCase();
   return createStream(`${sym}@depth20@1000ms`, (data) => {
     callback({
       bids: data.bids.map(([p, q]) => [parseFloat(p), parseFloat(q)]),
       asks: data.asks.map(([p, q]) => [parseFloat(p), parseFloat(q)]),
     });
-  });
+  }, undefined, market);
 }
