@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // The repository is published at https://high244.github.io/Crypto/.
+  base: '/Crypto/',
   plugins: [react()],
   server: {
     proxy: {

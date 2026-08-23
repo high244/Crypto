@@ -1,5 +1,7 @@
-// Binance REST API service — all requests go through Vite proxy to bypass CORS
-const BASE = '/binance-api/api/v3';
+// Binance REST API service — local development uses Vite's proxy.
+const BASE = import.meta.env.DEV
+  ? '/binance-api/api/v3'
+  : 'https://data-api.binance.vision/api/v3';
 
 /**
  * Fetch historical klines (candlestick data).

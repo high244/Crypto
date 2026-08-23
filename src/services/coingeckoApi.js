@@ -1,5 +1,7 @@
-// CoinGecko API service — fallback for coins not on Binance
-const BASE = '/coingecko-api/api/v3';
+// CoinGecko API service — local development uses Vite's proxy.
+const BASE = import.meta.env.DEV
+  ? '/coingecko-api/api/v3'
+  : 'https://api.coingecko.com/api/v3';
 
 // Cache coin list for ID lookups
 let _coinListCache = null;
