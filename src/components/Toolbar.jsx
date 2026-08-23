@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchSymbols } from '../services/binanceApi';
-import { searchCoins } from '../services/coingeckoApi';
+import { searchAllCoins, searchCoins } from '../services/coingeckoApi';
 
 const TIMEFRAMES = [
   { label: '1m', value: '1m' },
@@ -23,6 +23,15 @@ const INDICATORS = [
 ];
 
 const MIN_SEARCH_LENGTH = 2;
+
+function mergeCoinResults(...resultLists) {
+  const seenIds = new Set();
+  return resultLists.flat().filter((coin) => {
+    if (seenIds.has(coin.id)) return false;
+    seenIds.add(coin.id);
+    return true;
+  });
+}
 
 export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe, onTimeframeChange, indicators, onToggleIndicator }) {
   const [searchText, setSearchText] = useState(symbol);
@@ -68,13 +77,28 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
     setCgResults([]);
 
     let cancelled = false;
+    let instantResults = [];
+    let catalogResults = [];
+    const updateCoinGeckoResults = () => {
+      if (!cancelled) setCgResults(mergeCoinResults(instantResults, catalogResults));
+    };
     const timer = setTimeout(() => {
       searchCoins(q)
         .then((results) => {
-          if (!cancelled) setCgResults(results);
+          instantResults = results;
+          updateCoinGeckoResults();
         })
         .catch(() => {
-          if (!cancelled) setCgResults([]);
+          updateCoinGeckoResults();
+        });
+
+      searchAllCoins(q)
+        .then((results) => {
+          catalogResults = results;
+          updateCoinGeckoResults();
+        })
+        .catch(() => {
+          updateCoinGeckoResults();
         });
     }, 250);
 

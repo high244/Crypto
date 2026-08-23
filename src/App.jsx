@@ -53,13 +53,17 @@ export default function App() {
 
       const klineSub = subscribeKline(sym, tf, (candle) => {
         if (chartRef.current?.updateCandle) chartRef.current.updateCandle(candle);
-        if (candle.isClosed) {
-          setChartData((prev) => {
-            const idx = prev.findIndex((d) => d.time === candle.time);
-            if (idx >= 0) { const u = [...prev]; u[idx] = candle; return u; }
-            return [...prev, candle];
-          });
-        }
+        // Update chartData on every tick for real-time accuracy
+        setChartData((prev) => {
+          const idx = prev.findIndex((d) => d.time === candle.time);
+          if (idx >= 0) {
+            const u = [...prev];
+            u[idx] = candle;
+            return u;
+          }
+          // New candle period started
+          return [...prev, candle];
+        });
       });
 
       const tickerSub = subscribeTicker(sym, setTicker);

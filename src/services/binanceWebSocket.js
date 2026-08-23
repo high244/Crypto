@@ -1,5 +1,5 @@
 // Binance WebSocket service — connects directly (no CORS issues for WS)
-const WS_BASE = 'wss://data-stream.binance.vision/ws';
+const WS_BASE = 'wss://stream.binance.com:9443/ws';
 
 /**
  * Creates a managed WebSocket connection with auto-reconnect.

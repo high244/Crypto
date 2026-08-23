@@ -41,10 +41,20 @@ export async function findCoinId(symbol) {
 }
 
 /**
- * Search coins by query string.
+ * Search CoinGecko's ranked index first, so popular assets appear immediately.
  * Returns [{id, symbol, name}, ...]
  */
 export async function searchCoins(query) {
+  const res = await fetch(`${BASE}/search?query=${encodeURIComponent(query)}`);
+  if (!res.ok) throw new Error(`CoinGecko search HTTP ${res.status}`);
+  const data = await res.json();
+  return data.coins || [];
+}
+
+/**
+ * Search the full CoinGecko ID map to include every matching catalog entry.
+ */
+export async function searchAllCoins(query) {
   const list = await getCoinList();
   const q = query.toLowerCase();
   return list

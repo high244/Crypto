@@ -13,7 +13,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/binance-api': {
-        target: 'https://data-api.binance.vision',
+        target: 'https://api.binance.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/binance-api/, ''),
         secure: true,
