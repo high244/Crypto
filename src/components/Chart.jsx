@@ -8,7 +8,7 @@ import {
   HistogramSeries,
   LineStyle,
 } from 'lightweight-charts';
-import { calcSMA, calcEMA, calcBollingerBands, calcRSI, calcMACD } from '../utils/indicators';
+import { calcSMA, calcEMA, calcBollingerBands, calcRSI, calcMACD, calcParabolicSAR } from '../utils/indicators';
 
 const INDICATOR_COLORS = {
   sma7: '#f7a21b',
@@ -259,6 +259,39 @@ const Chart = forwardRef(function Chart({ data, indicators, loading }, ref) {
         const hs = chart.addSeries(HistogramSeries, { priceScaleId: 'macd', title: 'Hist' }, pane);
         hs.setData(hF);
         indicatorSeriesRef.current.macdH = hs;
+      }
+    }
+
+    // Parabolic SAR overlay — scatter dots
+    if (indicators.sar) {
+      const { sarUp, sarDown } = calcParabolicSAR(data);
+      const upF = sarUp.filter(Boolean);
+      const downF = sarDown.filter(Boolean);
+      if (upF.length) {
+        const su = chart.addSeries(LineSeries, {
+          color: '#26a69a',
+          lineWidth: 0,
+          pointMarkersVisible: true,
+          pointMarkersRadius: 2.5,
+          title: 'SAR ↑',
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        su.setData(upF);
+        indicatorSeriesRef.current.sarUp = su;
+      }
+      if (downF.length) {
+        const sd = chart.addSeries(LineSeries, {
+          color: '#ef5350',
+          lineWidth: 0,
+          pointMarkersVisible: true,
+          pointMarkersRadius: 2.5,
+          title: 'SAR ↓',
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        sd.setData(downF);
+        indicatorSeriesRef.current.sarDown = sd;
       }
     }
   }, [data, indicators]);

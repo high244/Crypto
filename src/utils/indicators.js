@@ -199,3 +199,71 @@ function calcEMAValues(values, period) {
   }
   return result;
 }
+
+/**
+ * Parabolic SAR (Stop and Reverse) — standard Wilder-style algorithm.
+ * Returns two arrays: sarUp (dots below price = uptrend) and sarDown (dots above price = downtrend).
+ * Each entry is {time, value} or null.
+ * @param {Array<{time:number, open:number, high:number, low:number, close:number}>} data
+ * @param {number} step AF increment (default 0.02)
+ * @param {number} maxStep AF ceiling (default 0.2)
+ * @returns {{sarUp: Array, sarDown: Array}}
+ */
+export function calcParabolicSAR(data, step = 0.02, maxStep = 0.2) {
+  const n = data.length;
+  const sarUp = new Array(n).fill(null);
+  const sarDown = new Array(n).fill(null);
+  if (n < 2) return { sarUp, sarDown };
+
+  let isUp = data[1].close >= data[0].close;
+  let af = step;
+  let ep = isUp ? data[0].high : data[0].low;
+  let sar = isUp ? data[0].low : data[0].high;
+
+  if (isUp) {
+    sarUp[0] = { time: data[0].time, value: +sar.toFixed(6) };
+  } else {
+    sarDown[0] = { time: data[0].time, value: +sar.toFixed(6) };
+  }
+
+  for (let i = 1; i < n; i++) {
+    let nextSar = sar + af * (ep - sar);
+
+    if (isUp) {
+      const cap = Math.min(data[i - 1].low, i >= 2 ? data[i - 2].low : data[i - 1].low);
+      nextSar = Math.min(nextSar, cap);
+      if (data[i].low < nextSar) {
+        // Flip to downtrend
+        isUp = false;
+        nextSar = ep;
+        ep = data[i].low;
+        af = step;
+      } else if (data[i].high > ep) {
+        ep = data[i].high;
+        af = Math.min(af + step, maxStep);
+      }
+    } else {
+      const cap = Math.max(data[i - 1].high, i >= 2 ? data[i - 2].high : data[i - 1].high);
+      nextSar = Math.max(nextSar, cap);
+      if (data[i].high > nextSar) {
+        // Flip to uptrend
+        isUp = true;
+        nextSar = ep;
+        ep = data[i].high;
+        af = step;
+      } else if (data[i].low < ep) {
+        ep = data[i].low;
+        af = Math.min(af + step, maxStep);
+      }
+    }
+    sar = nextSar;
+
+    if (isUp) {
+      sarUp[i] = { time: data[i].time, value: +sar.toFixed(6) };
+    } else {
+      sarDown[i] = { time: data[i].time, value: +sar.toFixed(6) };
+    }
+  }
+
+  return { sarUp, sarDown };
+}

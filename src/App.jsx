@@ -5,9 +5,11 @@ import TickerBar from './components/TickerBar';
 import OrderBook from './components/OrderBook';
 import RecentTrades from './components/RecentTrades';
 import Watchlist from './components/Watchlist';
+import AnalysisPanel from './components/AnalysisPanel';
 import { fetchKlines } from './services/binanceApi';
 import { subscribeKline, subscribeTicker, subscribeTrades, subscribeDepth } from './services/binanceWebSocket';
 import { fetchOHLC, fetchCoinMarketData, findCoinId, timeframeToDays } from './services/coingeckoApi';
+import { fetchBybitKline, fetchOKXKline, parseCSVData } from './services/exchangeApi';
 
 export default function App() {
   const [symbol, setSymbol] = useState('BTCUSDT');
@@ -19,7 +21,8 @@ export default function App() {
   const [trades, setTrades] = useState([]);
   const [rightTab, setRightTab] = useState('book');
   const [error, setError] = useState('');
-  const [dataSource, setDataSource] = useState('binance'); // 'binance' | 'coingecko'
+  const [dataSource, setDataSource] = useState('binance'); // 'binance' | 'coingecko' | 'bybit' | 'okx' | 'csv'
+  const [exchangeSource, setExchangeSource] = useState('binance'); // toolbar exchange selector
   const [coinGeckoId, setCoinGeckoId] = useState(null);
   const [indicators, setIndicators] = useState({
     sma7: false,
@@ -27,6 +30,7 @@ export default function App() {
     sma99: false,
     ema: false,
     bb: false,
+    sar: false,
     rsi: false,
     macd: false,
   });
@@ -104,6 +108,40 @@ export default function App() {
     []
   );
 
+  // --- BYBIT data loader ---
+  const loadBybitData = useCallback(
+    async (sym, tf) => {
+      const klines = await fetchBybitKline(sym, tf, 200);
+      setChartData(klines);
+      setChartLoading(false);
+      // Bybit has no free WebSocket for browser, so we poll every 15s
+      pollTimerRef.current = setInterval(async () => {
+        try {
+          const fresh = await fetchBybitKline(sym, tf, 200);
+          setChartData(fresh);
+        } catch (e) { /* ignore poll errors */ }
+      }, 15000);
+    },
+    []
+  );
+
+  // --- OKX data loader ---
+  const loadOKXData = useCallback(
+    async (sym, tf) => {
+      const klines = await fetchOKXKline(sym, tf, 200);
+      setChartData(klines);
+      setChartLoading(false);
+      // OKX has no free WebSocket for browser, so we poll every 15s
+      pollTimerRef.current = setInterval(async () => {
+        try {
+          const fresh = await fetchOKXKline(sym, tf, 200);
+          setChartData(fresh);
+        } catch (e) { /* ignore poll errors */ }
+      }, 15000);
+    },
+    []
+  );
+
   // --- Main data loader ---
   const loadData = useCallback(
     async (sym, tf, source, cgId) => {
@@ -114,6 +152,10 @@ export default function App() {
       try {
         if (source === 'coingecko' && cgId) {
           await loadCoinGeckoData(cgId, tf);
+        } else if (source === 'bybit') {
+          await loadBybitData(sym, tf);
+        } else if (source === 'okx') {
+          await loadOKXData(sym, tf);
         } else {
           await loadBinanceData(sym, tf);
         }
@@ -123,11 +165,12 @@ export default function App() {
         setChartLoading(false);
       }
     },
-    [cleanupWS, loadBinanceData, loadCoinGeckoData]
+    [cleanupWS, loadBinanceData, loadCoinGeckoData, loadBybitData, loadOKXData]
   );
 
   // Load data when symbol/timeframe/source changes
   useEffect(() => {
+    if (dataSource === 'csv') return; // CSV data is loaded manually
     setTrades([]);
     setOrderBook(null);
     setTicker(null);
@@ -140,6 +183,7 @@ export default function App() {
     if (source === 'coingecko' && cgId) {
       setSymbol(sym);
       setDataSource('coingecko');
+      setExchangeSource('binance');
       setCoinGeckoId(cgId);
     } else if (source === 'coingecko') {
       // Manual entry — try to find in CoinGecko
@@ -147,28 +191,62 @@ export default function App() {
       if (coin) {
         setSymbol(sym);
         setDataSource('coingecko');
+        setExchangeSource('binance');
         setCoinGeckoId(coin.id);
       }
     } else {
       setSymbol(sym);
-      setDataSource('binance');
+      setDataSource(exchangeSource);
       setCoinGeckoId(null);
     }
-  }, []);
+  }, [exchangeSource]);
 
-  // Watchlist always uses Binance
-  const handleWatchlistSelect = useCallback((sym) => {
-    setSymbol(sym);
-    setDataSource('binance');
+  // Exchange source change handler
+  const handleExchangeChange = useCallback((exchange) => {
+    setExchangeSource(exchange);
+    setDataSource(exchange);
     setCoinGeckoId(null);
   }, []);
+
+  // Watchlist always uses current exchange
+  const handleWatchlistSelect = useCallback((sym) => {
+    setSymbol(sym);
+    setDataSource(exchangeSource);
+    setCoinGeckoId(null);
+  }, [exchangeSource]);
+
+  // CSV data load handler
+  const handleLoadCSV = useCallback((csvText) => {
+    try {
+      const parsed = parseCSVData(csvText);
+      setChartData(parsed);
+      setDataSource('csv');
+      setChartLoading(false);
+      cleanupWS();
+      setTicker(null);
+      setOrderBook(null);
+      setTrades([]);
+      setError('');
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [cleanupWS]);
 
   const handleTimeframeChange = useCallback((tf) => setTimeframe(tf), []);
   const handleToggleIndicator = useCallback((key) => {
     setIndicators((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const isCoinGecko = dataSource === 'coingecko';
+  const isBinanceWS = dataSource === 'binance';
+
+  // Determine source label for header
+  const sourceLabels = {
+    binance: 'Binance',
+    bybit: 'Bybit',
+    okx: 'OKX',
+    coingecko: 'CoinGecko',
+    csv: 'CSV Import',
+  };
 
   return (
     <div className="app-layout">
@@ -182,7 +260,7 @@ export default function App() {
           CryptoView
         </div>
         <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-          Real-time market data • Binance + CoinGecko
+          Real-time market data • {sourceLabels[dataSource] || 'Binance'} + CoinGecko
         </span>
         {error && (
           <span style={{ color: 'var(--red)', fontSize: 11, marginLeft: 'auto' }}>⚠ {error}</span>
@@ -205,11 +283,13 @@ export default function App() {
           onTimeframeChange={handleTimeframeChange}
           indicators={indicators}
           onToggleIndicator={handleToggleIndicator}
+          exchangeSource={exchangeSource}
+          onExchangeChange={handleExchangeChange}
         />
         <Chart ref={chartRef} data={chartData} indicators={indicators} loading={chartLoading} />
       </div>
 
-      {/* Right — Order Book + Trades */}
+      {/* Right — Order Book + Trades + Analysis */}
       <div className="panel" style={{ borderRight: 'none', borderLeft: '1px solid var(--border)' }}>
         <div className="right-panel-tabs">
           <button
@@ -224,13 +304,26 @@ export default function App() {
           >
             Trades
           </button>
+          <button
+            className={`right-panel-tab ${rightTab === 'analysis' ? 'active' : ''}`}
+            onClick={() => setRightTab('analysis')}
+          >
+            Analysis
+          </button>
         </div>
         <div className="panel-body">
-          {isCoinGecko ? (
+          {rightTab === 'analysis' ? (
+            <AnalysisPanel
+              chartData={chartData}
+              indicators={indicators}
+              dataSource={dataSource}
+              onLoadCSV={handleLoadCSV}
+            />
+          ) : !isBinanceWS ? (
             <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 12, textAlign: 'center', lineHeight: 1.6 }}>
               <div style={{ fontSize: 20, marginBottom: 8 }}>📊</div>
-              Order book & trades tidak tersedia untuk data CoinGecko.
-              <br />Fitur ini hanya tersedia untuk pair Binance.
+              Order book & trades tidak tersedia untuk {sourceLabels[dataSource] || dataSource}.
+              <br />Fitur ini hanya tersedia untuk Binance (real-time WebSocket).
             </div>
           ) : rightTab === 'book' ? (
             <OrderBook data={orderBook} />

@@ -24,6 +24,18 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/coingecko-api/, ''),
         secure: true,
       },
+      '/bybit-api': {
+        target: 'https://api.bybit.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/bybit-api/, ''),
+        secure: true,
+      },
+      '/okx-api': {
+        target: 'https://www.okx.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/okx-api/, ''),
+        secure: true,
+      },
     },
   },
 })

@@ -18,6 +18,7 @@ const INDICATORS = [
   { key: 'sma99', label: 'SMA 99' },
   { key: 'ema', label: 'EMA 21' },
   { key: 'bb', label: 'BB' },
+  { key: 'sar', label: 'SAR' },
   { key: 'rsi', label: 'RSI' },
   { key: 'macd', label: 'MACD' },
 ];
@@ -33,7 +34,13 @@ function mergeCoinResults(...resultLists) {
   });
 }
 
-export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe, onTimeframeChange, indicators, onToggleIndicator }) {
+const EXCHANGES = [
+  { key: 'binance', label: 'Binance', color: 'var(--green)' },
+  { key: 'bybit', label: 'Bybit', color: 'var(--yellow)' },
+  { key: 'okx', label: 'OKX', color: 'var(--cyan)' },
+];
+
+export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe, onTimeframeChange, indicators, onToggleIndicator, exchangeSource, onExchangeChange }) {
   const [searchText, setSearchText] = useState(symbol);
   const [showDropdown, setShowDropdown] = useState(false);
   const [binanceSymbols, setBinanceSymbols] = useState([]);
@@ -258,6 +265,22 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
             onClick={() => onToggleIndicator(ind.key)}
           >
             {ind.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="toolbar-divider" />
+
+      {/* Exchange Source */}
+      <div className="toolbar-group">
+        {EXCHANGES.map((ex) => (
+          <button
+            key={ex.key}
+            className={`toolbar-btn ${exchangeSource === ex.key ? 'exchange-active' : ''}`}
+            onClick={() => onExchangeChange(ex.key)}
+            style={exchangeSource === ex.key ? { color: ex.color, borderColor: ex.color } : {}}
+          >
+            {ex.label}
           </button>
         ))}
       </div>

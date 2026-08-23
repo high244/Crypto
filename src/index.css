@@ -536,3 +536,325 @@ body {
   color: var(--text-primary);
   border-bottom-color: var(--accent);
 }
+
+/* ---------- Exchange Source Toggle ---------- */
+.toolbar-btn.exchange-active {
+  background: rgba(41, 98, 255, 0.1);
+  border: 1px solid rgba(41, 98, 255, 0.3);
+  font-weight: 600;
+}
+
+/* ---------- Analysis Panel ---------- */
+.analysis-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.analysis-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.analysis-tab {
+  flex: 1;
+  padding: 6px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  transition: all 0.15s;
+}
+
+.analysis-tab:hover {
+  color: var(--text-secondary);
+}
+
+.analysis-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+.analysis-settings-btn {
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.analysis-settings-btn:hover {
+  opacity: 0.7;
+}
+
+.analysis-key-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+
+.analysis-key-status {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.analysis-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.analysis-section {
+  padding: 12px;
+}
+
+.analysis-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.analysis-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.analysis-desc code {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.analysis-textarea {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 8px;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.analysis-textarea:focus {
+  border-color: var(--accent);
+}
+
+.analysis-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.analysis-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+}
+
+.analysis-input:focus {
+  border-color: var(--accent);
+}
+
+.analysis-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.analysis-btn:hover {
+  background: var(--accent-hover);
+}
+
+.analysis-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.analysis-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.analysis-error {
+  color: var(--red);
+  font-size: 11px;
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.analysis-result {
+  margin-top: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.analysis-badge {
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.analysis-badge.bullish { color: var(--green); }
+.analysis-badge.bearish { color: var(--red); }
+.analysis-badge.neutral { color: var(--yellow); }
+
+.analysis-badge-sub {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 11px;
+  text-transform: none;
+}
+
+.analysis-reasoning {
+  color: var(--text-primary);
+  font-size: 11px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.analysis-events {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysis-event {
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  line-height: 1.4;
+}
+
+.analysis-event-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.analysis-event-impact {
+  margin: 0 4px;
+  font-weight: 600;
+}
+
+.analysis-event-impact.impact-tinggi { color: var(--red); }
+.analysis-event-impact.impact-sedang { color: var(--yellow); }
+.analysis-event-impact.impact-rendah { color: var(--text-secondary); }
+
+.analysis-event-note {
+  color: var(--text-muted);
+}
+
+/* Summary grid */
+.analysis-summary-grid {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.analysis-summary-card {
+  flex: 1;
+  min-width: 70px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.analysis-summary-label {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.analysis-summary-value {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.analysis-summary-value.bullish { color: var(--green); }
+.analysis-summary-value.bearish { color: var(--red); }
+.analysis-summary-value.neutral { color: var(--yellow); }
+
+.analysis-composite {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.analysis-composite-label {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.analysis-composite-value {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.analysis-composite-value.bullish { color: var(--green); }
+.analysis-composite-value.bearish { color: var(--red); }
+.analysis-composite-value.neutral { color: var(--yellow); }
+
+.analysis-composite-note {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
