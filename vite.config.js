@@ -6,6 +6,10 @@ export default defineConfig({
   // The repository is published at https://high244.github.io/Crypto/.
   base: '/Crypto/',
   plugins: [react()],
+  build: {
+    // GitHub Pages publishes the committed /docs folder from main.
+    outDir: 'docs',
+  },
   server: {
     proxy: {
       '/binance-api': {
