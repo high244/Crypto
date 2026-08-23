@@ -134,8 +134,10 @@ export default function Toolbar({ symbol, dataSource, onSymbolChange, timeframe,
         />
         {showDropdown && (
           <div className="symbol-dropdown">
-            {symbolsLoading ? (
-              <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>Loading symbols...</div>
+            {symbolsLoading && filtered.length === 0 && cgResults.length === 0 ? (
+              <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>
+                Loading Binance pairs and global coins...
+              </div>
             ) : searchText.trim().length < MIN_SEARCH_LENGTH ? (
               <div className="symbol-item" style={{ justifyContent: 'center', color: 'var(--text-muted)' }}>
                 Type at least 2 characters to search all coins.
