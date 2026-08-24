@@ -1,5 +1,5 @@
 // CoinGecko API service — local development uses Vite's proxy.
-const BASE = import.meta.env.DEV
+const BASE = import.meta.env?.DEV
   ? '/coingecko-api/api/v3'
   : 'https://api.coingecko.com/api/v3';
 

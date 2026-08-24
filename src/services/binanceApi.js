@@ -1,7 +1,7 @@
 // Binance REST API service — local development uses Vite's proxy.
-const BASE = import.meta.env.DEV
+const BASE = import.meta.env?.DEV
   ? '/binance-api/api/v3'
-  : 'https://api.binance.com/api/v3';
+  : 'https://data-api.binance.vision/api/v3';
 
 /**
  * Fetch historical klines (candlestick data).
@@ -10,8 +10,10 @@ const BASE = import.meta.env.DEV
  * @param {number} limit max 1000
  * @returns {Promise<Array<{time:number, open:number, high:number, low:number, close:number, volume:number}>>}
  */
-export async function fetchKlines(symbol, interval, limit = 500, { signal } = {}) {
-  const url = `${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
+export async function fetchKlines(symbol, interval, limit = 500, { endTime, startTime, signal } = {}) {
+  let url = `${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
+  if (endTime) url += `&endTime=${endTime}`;
+  if (startTime) url += `&startTime=${startTime}`;
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`Binance klines HTTP ${res.status}`);
   const data = await res.json();

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSymbols } from '../services/binanceApi';
 import { fetchFuturesSymbols } from '../services/binanceFuturesApi';
 import { searchAllCoins, searchCoins } from '../services/coingeckoApi';
+import { fetchHyperliquidSymbols } from '../services/hyperliquidApi';
+import { searchDexScreener } from '../services/dexscreenerApi';
 import { LIVE_SOURCES, SOURCE_LABELS } from '../services/marketData';
 
 const TIMEFRAMES = [
@@ -27,7 +29,7 @@ const INDICATORS = [
 ];
 
 const MIN_SEARCH_LENGTH = 2;
-const MAX_VISIBLE_RESULTS = 60;
+const MAX_VISIBLE_RESULTS = 40;
 
 function mergeCoinResults(...resultLists) {
   const seenIds = new Set();
@@ -52,12 +54,15 @@ export default function Toolbar({
   const [searchText, setSearchText] = useState(symbol);
   const [showDropdown, setShowDropdown] = useState(false);
   const [binanceSymbols, setBinanceSymbols] = useState([]);
-  const [filtered, setFiltered] = useState([]);
+  const [hlSymbols, setHlSymbols] = useState([]);
+  const [filteredBinance, setFilteredBinance] = useState([]);
+  const [filteredHL, setFilteredHL] = useState([]);
+  const [dexResults, setDexResults] = useState([]);
   const [cgResults, setCgResults] = useState([]);
   const [symbolsLoading, setSymbolsLoading] = useState(true);
   const wrapperRef = useRef(null);
 
-  const binanceLabel = market === 'futures' ? 'BINANCE FUTURES' : 'BINANCE SPOT';
+  const binanceLabel = market === 'futures' ? 'BINANCE FUTURES (Real-Time)' : 'BINANCE SPOT (Real-Time)';
   const badgeLabel = activeSource ? SOURCE_LABELS[activeSource] : 'Menghubungkan';
   const badgeState = !activeSource
     ? 'loading'
@@ -65,22 +70,23 @@ export default function Toolbar({
       ? 'manual'
       : LIVE_SOURCES.has(activeSource) ? 'live' : 'polling';
 
+  // Load Binance and Hyperliquid symbols
   useEffect(() => {
     let cancelled = false;
     setSymbolsLoading(true);
     setBinanceSymbols([]);
 
-    const loadSymbols = market === 'futures' ? fetchFuturesSymbols : fetchSymbols;
-    loadSymbols()
-      .then((symbols) => {
-        if (!cancelled) setBinanceSymbols(symbols);
-      })
-      .catch(() => {
-        if (!cancelled) setBinanceSymbols([]);
-      })
-      .finally(() => {
-        if (!cancelled) setSymbolsLoading(false);
-      });
+    const loadBinance = market === 'futures' ? fetchFuturesSymbols : fetchSymbols;
+    Promise.allSettled([
+      loadBinance(),
+      fetchHyperliquidSymbols(),
+    ]).then(([binanceRes, hlRes]) => {
+      if (cancelled) return;
+      if (binanceRes.status === 'fulfilled') setBinanceSymbols(binanceRes.value);
+      if (hlRes.status === 'fulfilled') setHlSymbols(hlRes.value);
+    }).finally(() => {
+      if (!cancelled) setSymbolsLoading(false);
+    });
 
     return () => {
       cancelled = true;
@@ -91,53 +97,75 @@ export default function Toolbar({
     setSearchText(symbol);
   }, [symbol]);
 
+  // Debounced search across Binance, Hyperliquid, DexScreener, and CoinGecko
   useEffect(() => {
     const query = searchText.trim().toUpperCase();
     if (!showDropdown || query.length < MIN_SEARCH_LENGTH) {
-      setFiltered([]);
+      setFilteredBinance([]);
+      setFilteredHL([]);
+      setDexResults([]);
       setCgResults([]);
       return undefined;
     }
 
-    setFiltered(
+    // 1. Instant Binance filter
+    setFilteredBinance(
       binanceSymbols.filter((item) => (
         item.symbol.includes(query)
         || item.baseAsset.includes(query)
         || item.quoteAsset.includes(query)
       )).slice(0, MAX_VISIBLE_RESULTS)
     );
-    setCgResults([]);
+
+    // 2. Instant Hyperliquid filter
+    setFilteredHL(
+      hlSymbols.filter((item) => (
+        item.symbol.includes(query)
+        || item.baseAsset.includes(query)
+      )).slice(0, 20)
+    );
 
     let cancelled = false;
-    let instantResults = [];
-    let catalogResults = [];
+    let instantCg = [];
+    let catalogCg = [];
+
     const updateCoinGeckoResults = () => {
       if (!cancelled) {
-        setCgResults(mergeCoinResults(instantResults, catalogResults).slice(0, MAX_VISIBLE_RESULTS));
+        setCgResults(mergeCoinResults(instantCg, catalogCg).slice(0, 25));
       }
     };
 
     const timer = setTimeout(() => {
+      // 3. Fast DexScreener search
+      searchDexScreener(query)
+        .then((results) => {
+          if (!cancelled) setDexResults(results.slice(0, 15));
+        })
+        .catch(() => {
+          if (!cancelled) setDexResults([]);
+        });
+
+      // 4. CoinGecko search fallback
       searchCoins(query)
         .then((results) => {
-          instantResults = results;
+          instantCg = results;
           updateCoinGeckoResults();
         })
         .catch(updateCoinGeckoResults);
 
       searchAllCoins(query)
         .then((results) => {
-          catalogResults = results;
+          catalogCg = results;
           updateCoinGeckoResults();
         })
         .catch(updateCoinGeckoResults);
-    }, 250);
+    }, 200);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [binanceSymbols, searchText, showDropdown]);
+  }, [binanceSymbols, hlSymbols, searchText, showDropdown]);
 
   useEffect(() => {
     const closeOnOutsideClick = (event) => {
@@ -161,6 +189,11 @@ export default function Toolbar({
     if (nextSymbol) selectSymbol(nextSymbol);
   }, [searchText, selectSymbol]);
 
+  const hasAnyResults = filteredBinance.length > 0
+    || filteredHL.length > 0
+    || dexResults.length > 0
+    || cgResults.length > 0;
+
   return (
     <div className="toolbar">
       <div className="symbol-search-wrapper" ref={wrapperRef}>
@@ -178,18 +211,19 @@ export default function Toolbar({
         />
         {showDropdown && (
           <div className="symbol-dropdown">
-            {symbolsLoading && filtered.length === 0 && cgResults.length === 0 ? (
+            {symbolsLoading && !hasAnyResults ? (
               <div className="symbol-item symbol-message">Memuat pair dan katalog coin…</div>
             ) : searchText.trim().length < MIN_SEARCH_LENGTH ? (
               <div className="symbol-item symbol-message">Ketik minimal 2 karakter.</div>
-            ) : filtered.length === 0 && cgResults.length === 0 ? (
+            ) : !hasAnyResults ? (
               <div className="symbol-item symbol-message">Tidak ada hasil.</div>
             ) : (
               <>
-                {filtered.length > 0 && (
+                {/* 1. Binance Section */}
+                {filteredBinance.length > 0 && (
                   <>
                     <div className="symbol-source-heading">{binanceLabel}</div>
-                    {filtered.map((item) => (
+                    {filteredBinance.map((item) => (
                       <button
                         key={item.symbol}
                         className="symbol-item"
@@ -204,9 +238,54 @@ export default function Toolbar({
                     ))}
                   </>
                 )}
+
+                {/* 2. Hyperliquid Section (0-Delay Real-time DEX) */}
+                {filteredHL.length > 0 && (
+                  <>
+                    <div className="symbol-source-heading hyperliquid">HYPERLIQUID (Real-Time DEX)</div>
+                    {filteredHL.map((item) => (
+                      <button
+                        key={`hl_${item.baseAsset}`}
+                        className="symbol-item"
+                        onClick={() => selectSymbol(`${item.baseAsset}USDT`)}
+                        type="button"
+                      >
+                        <span className="symbol-item-name">
+                          {item.baseAsset}<span className="symbol-item-quote">/USD</span>
+                        </span>
+                        <span className="symbol-item-pair hyperliquid">Real-Time Perp</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* 3. DexScreener Section (Fast Multi-Chain Tracker) */}
+                {dexResults.length > 0 && (
+                  <>
+                    <div className="symbol-source-heading dexscreener">DEXSCREENER (Multi-Chain DEX)</div>
+                    {dexResults.map((item) => (
+                      <button
+                        key={item.id}
+                        className="symbol-item"
+                        onClick={() => selectSymbol(`${item.baseAsset}USDT`)}
+                        type="button"
+                      >
+                        <span className="symbol-item-name">
+                          {item.baseAsset}<span className="symbol-item-quote">/{item.quoteAsset}</span>
+                        </span>
+                        <span className="symbol-item-pair dexscreener">
+                          <span className="dex-chain-tag">{item.chainId}</span>
+                          ${item.priceUsd < 1 ? item.priceUsd.toFixed(4) : item.priceUsd.toFixed(2)}
+                        </span>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* 4. CoinGecko Catalog Fallback */}
                 {cgResults.length > 0 && (
                   <>
-                    <div className="symbol-source-heading coingecko">COINGECKO</div>
+                    <div className="symbol-source-heading coingecko">COINGECKO (Catalog)</div>
                     {cgResults.map((coin) => (
                       <button
                         key={coin.id}

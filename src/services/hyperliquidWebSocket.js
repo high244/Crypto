@@ -90,3 +90,39 @@ export function subscribeHyperliquidAssetContext(coin, callback, onError) {
     onError
   );
 }
+
+export function subscribeHyperliquidDepth(coin, callback, onError) {
+  return createSubscription(
+    { type: 'l2Book', coin },
+    (book) => {
+      if (!Array.isArray(book?.levels)) return;
+      const rawBids = book.levels[0] || [];
+      const rawAsks = book.levels[1] || [];
+      callback({
+        bids: rawBids.slice(0, 20).map((lvl) => [Number(lvl.px), Number(lvl.sz)]),
+        asks: rawAsks.slice(0, 20).map((lvl) => [Number(lvl.px), Number(lvl.sz)]),
+      });
+    },
+    onError
+  );
+}
+
+export function subscribeHyperliquidTrades(coin, callback, onError) {
+  return createSubscription(
+    { type: 'trades', coin },
+    (trades) => {
+      if (!Array.isArray(trades)) return;
+      trades.forEach((trade) => {
+        callback({
+          id: trade.hash || `${trade.time}-${trade.px}-${trade.sz}`,
+          price: Number(trade.px),
+          qty: Number(trade.sz),
+          time: Number(trade.time),
+          isBuyerMaker: trade.side === 'A',
+        });
+      });
+    },
+    onError
+  );
+}
+

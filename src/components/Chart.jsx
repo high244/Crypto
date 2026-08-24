@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   createChart,
   ColorType,
@@ -24,11 +24,35 @@ const INDICATOR_COLORS = {
   signal: '#ff6d00',
 };
 
+const TIMEFRAME_SECONDS = {
+  '1m': 60,
+  '5m': 5 * 60,
+  '15m': 15 * 60,
+  '1h': 3600,
+  '4h': 4 * 3600,
+  '1d': 86400,
+  '1w': 7 * 86400,
+  'all': 86400,
+};
+
+function getDynamicPriceFormat(candles) {
+  if (!candles?.length) return { type: 'price', precision: 2, minMove: 0.01 };
+  const sample = candles[candles.length - 1]?.close || candles[0]?.close || 100;
+  if (sample >= 100) return { type: 'price', precision: 2, minMove: 0.01 };
+  if (sample >= 1) return { type: 'price', precision: 4, minMove: 0.0001 };
+  if (sample >= 0.01) return { type: 'price', precision: 5, minMove: 0.00001 };
+  if (sample >= 0.0001) return { type: 'price', precision: 7, minMove: 0.0000001 };
+  return { type: 'price', precision: 8, minMove: 0.00000001 };
+}
+
 const NOOP = () => {};
 
 const Chart = forwardRef(function Chart({
   data,
   indicators,
+  symbol = 'BTCUSDT',
+  timeframe = '1h',
+  onLoadMoreHistory,
   loading,
   loadingProgress,
   emptyMessage,
@@ -54,10 +78,53 @@ const Chart = forwardRef(function Chart({
   const indicatorSeriesRef = useRef({});
   const [drawingApi, setDrawingApi] = useState({ chart: null, series: null });
   const [drawingApiVersion, setDrawingApiVersion] = useState(0);
+  const [countdown, setCountdown] = useState('');
+  const [priceCoord, setPriceCoord] = useState(null);
+  const lastCloseRef = useRef(null);
+  const lastInitialKey = useRef('');
+  const isPagingRef = useRef(false);
 
-  // Expose updateCandle to parent via ref
+  const updatePriceCoordinate = useCallback(() => {
+    if (!candleSeriesRef.current || lastCloseRef.current === null) return;
+    try {
+      const y = candleSeriesRef.current.priceToCoordinate(lastCloseRef.current);
+      if (y !== null && Number.isFinite(y)) {
+        setPriceCoord(y);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Live bar countdown
+  useEffect(() => {
+    const update = () => {
+      const tfSec = TIMEFRAME_SECONDS[timeframe] || 3600;
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = tfSec - (now % tfSec);
+
+      const hours = Math.floor(remaining / 3600);
+      const minutes = Math.floor((remaining % 3600) / 60);
+      const seconds = remaining % 60;
+
+      if (hours > 0) {
+        setCountdown(`${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+      } else {
+        setCountdown(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+      }
+
+      updatePriceCoordinate();
+    };
+
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [timeframe, updatePriceCoordinate]);
+
+  // Expose updateCandle to parent via ref (Zero-lag tick by tick)
   useImperativeHandle(ref, () => ({
     updateCandle(candle) {
+      lastCloseRef.current = candle.close;
       if (candleSeriesRef.current) {
         candleSeriesRef.current.update({
           time: candle.time,
@@ -66,6 +133,8 @@ const Chart = forwardRef(function Chart({
           low: candle.low,
           close: candle.close,
         });
+        const y = candleSeriesRef.current.priceToCoordinate(candle.close);
+        if (y !== null && Number.isFinite(y)) setPriceCoord(y);
       }
       if (volumeSeriesRef.current) {
         volumeSeriesRef.current.update({
@@ -108,17 +177,43 @@ const Chart = forwardRef(function Chart({
       },
       rightPriceScale: {
         borderColor: '#2A2F3B',
-        scaleMargins: { top: 0.1, bottom: 0.25 },
+        autoScale: true,
+        scaleMargins: { top: 0.1, bottom: 0.15 },
+        alignLabels: true,
       },
       timeScale: {
         borderColor: '#2A2F3B',
         timeVisible: true,
-        secondsVisible: false,
+        secondsVisible: true,
+        shiftVisibleRangeOnNewBar: true,
+        rightOffset: 12,
+        barSpacing: 8,
+        minBarSpacing: 1,
       },
-      handleScroll: { vertTouchDrag: false },
+      localization: {
+        dateFormat: 'yyyy-MM-dd',
+        timeFormatter: (timestamp) => {
+          const d = new Date(timestamp * 1000);
+          const h = String(d.getHours()).padStart(2, '0');
+          const m = String(d.getMinutes()).padStart(2, '0');
+          const s = String(d.getSeconds()).padStart(2, '0');
+          return `${h}:${m}:${s}`;
+        },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
     });
 
-    // Candlestick series (v5 API)
+    // Candlestick series
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#3FA796',
       downColor: '#E06C5C',
@@ -128,7 +223,7 @@ const Chart = forwardRef(function Chart({
       wickUpColor: '#3FA796',
     });
 
-    // Volume series (v5 API)
+    // Volume series
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
@@ -141,6 +236,14 @@ const Chart = forwardRef(function Chart({
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      updatePriceCoordinate();
+    });
+    chart.subscribeCrosshairMove(() => {
+      updatePriceCoordinate();
+    });
+
     setDrawingApi((previous) => (
       previous.chart === chart && previous.series === candleSeries
         ? previous
@@ -173,14 +276,46 @@ const Chart = forwardRef(function Chart({
     };
   }, []);
 
-  // Update data
+  // Infinite backward scrolling listener
   useEffect(() => {
-    if (!candleSeriesRef.current || !data?.length) return;
+    if (!chartRef.current || !onLoadMoreHistory) return;
+    const chart = chartRef.current;
+
+    const handleLogicalRangeChange = (range) => {
+      if (!range) return;
+      // When the user scrolls near the left edge (< 20 bars left)
+      if (range.from < 20 && !isPagingRef.current && data?.length > 10) {
+        isPagingRef.current = true;
+        onLoadMoreHistory().finally(() => {
+          setTimeout(() => {
+            isPagingRef.current = false;
+          }, 600);
+        });
+      }
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleLogicalRangeChange);
+    };
+  }, [data, onLoadMoreHistory]);
+
+  // Update data & dynamic formatting (NO rubberbanding on live ticks)
+  useEffect(() => {
+    if (!candleSeriesRef.current || !data?.length || !chartRef.current) return;
+
+    const currentKey = `${symbol}_${timeframe}`;
+    const isNewSymbolOrTimeframe = lastInitialKey.current !== currentKey;
+
+    // Apply dynamic price precision for low/high priced coins (e.g. PEPE, HYPE, BTC)
+    candleSeriesRef.current.applyOptions({
+      priceFormat: getDynamicPriceFormat(data),
+    });
 
     candleSeriesRef.current.setData(
       data.map((d) => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }))
     );
-    volumeSeriesRef.current.setData(
+    volumeSeriesRef.current?.setData(
       data.map((d) => ({
         time: d.time,
         value: d.volume,
@@ -188,12 +323,21 @@ const Chart = forwardRef(function Chart({
       }))
     );
 
-    // Auto-fit to content
-    if (chartRef.current) {
+    const last = data[data.length - 1];
+    if (last) {
+      lastCloseRef.current = last.close;
+      setTimeout(updatePriceCoordinate, 50);
+    }
+
+    // Only auto-fit and auto-scale on first load of symbol/timeframe!
+    // Never reset user view on tick or prepend updates!
+    if (isNewSymbolOrTimeframe) {
+      lastInitialKey.current = currentKey;
+      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
       chartRef.current.timeScale().fitContent();
       setDrawingApiVersion((previous) => previous + 1);
     }
-  }, [data]);
+  }, [data, symbol, timeframe, updatePriceCoordinate]);
 
   // Update indicators
   useEffect(() => {
@@ -272,41 +416,62 @@ const Chart = forwardRef(function Chart({
           priceScaleId: 'rsi',
         }, 1);
         s.setData(vals);
+        chart.priceScale('rsi', 1).applyOptions({
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        });
         indicatorSeriesRef.current.rsi = s;
-        s.createPriceLine({ price: 70, color: 'rgba(239, 83, 80, 0.4)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
-        s.createPriceLine({ price: 30, color: 'rgba(38, 166, 154, 0.4)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
       }
     }
 
     // MACD in separate pane
     if (indicators.macd) {
       const { macdLine, signalLine, histogram } = calcMACD(data, 12, 26, 9);
-      const mF = macdLine.filter(Boolean);
-      const sF = signalLine.filter(Boolean);
+      const mlF = macdLine.filter(Boolean);
+      const slF = signalLine.filter(Boolean);
       const hF = histogram.filter(Boolean);
-      if (mF.length) {
-        const pane = indicators.rsi ? 2 : 1;
-        const ml = chart.addSeries(LineSeries, { color: INDICATOR_COLORS.macdLine, lineWidth: 1.5, title: 'MACD', priceScaleId: 'macd' }, pane);
-        ml.setData(mF);
-        indicatorSeriesRef.current.macdL = ml;
-        const sl = chart.addSeries(LineSeries, { color: INDICATOR_COLORS.signal, lineWidth: 1.5, title: 'Signal', priceScaleId: 'macd' }, pane);
-        sl.setData(sF);
-        indicatorSeriesRef.current.macdS = sl;
-        const hs = chart.addSeries(HistogramSeries, { priceScaleId: 'macd', title: 'Hist' }, pane);
-        hs.setData(hF);
-        indicatorSeriesRef.current.macdH = hs;
+      if (mlF.length) {
+        const sml = chart.addSeries(LineSeries, {
+          color: INDICATOR_COLORS.macdLine,
+          lineWidth: 1.5,
+          title: 'MACD',
+          priceScaleId: 'macd',
+        }, 2);
+        sml.setData(mlF);
+        indicatorSeriesRef.current.macdLine = sml;
+
+        const ssl = chart.addSeries(LineSeries, {
+          color: INDICATOR_COLORS.signal,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          title: 'Signal',
+          priceScaleId: 'macd',
+        }, 2);
+        ssl.setData(slF);
+        indicatorSeriesRef.current.macdSignal = ssl;
+
+        const sh = chart.addSeries(HistogramSeries, {
+          priceScaleId: 'macd',
+          title: 'Hist',
+        }, 2);
+        sh.setData(hF);
+        indicatorSeriesRef.current.macdHist = sh;
+
+        chart.priceScale('macd', 2).applyOptions({
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        });
       }
     }
 
-    // Parabolic SAR overlay — scatter dots
+    // Parabolic SAR
     if (indicators.sar) {
-      const { sarUp, sarDown } = calcParabolicSAR(data);
+      const { sarUp, sarDown } = calcParabolicSAR(data, 0.02, 0.2);
       const upF = sarUp.filter(Boolean);
       const downF = sarDown.filter(Boolean);
       if (upF.length) {
         const su = chart.addSeries(LineSeries, {
-          color: '#3FA796',
-          lineWidth: 0,
+          color: '#26a69a',
+          lineWidth: 1,
+          lineStyle: LineStyle.LargeDashed,
           pointMarkersVisible: true,
           pointMarkersRadius: 2.5,
           title: 'SAR ↑',
@@ -318,8 +483,9 @@ const Chart = forwardRef(function Chart({
       }
       if (downF.length) {
         const sd = chart.addSeries(LineSeries, {
-          color: '#E06C5C',
-          lineWidth: 0,
+          color: '#ef5350',
+          lineWidth: 1,
+          lineStyle: LineStyle.LargeDashed,
           pointMarkersVisible: true,
           pointMarkersRadius: 2.5,
           title: 'SAR ↓',
@@ -335,7 +501,7 @@ const Chart = forwardRef(function Chart({
 
   return (
     <div className="chart-workspace" style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-      {loading && (
+      {loading && !data?.length && (
         <div className="chart-loading">
           <div className="spinner" />
           {loadingProgress || 'Loading chart data...'}
@@ -349,6 +515,15 @@ const Chart = forwardRef(function Chart({
         ref={containerRef}
         style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}
       />
+      {countdown && priceCoord !== null && Number.isFinite(priceCoord) && (
+        <div
+          className="price-axis-countdown"
+          style={{ top: `${priceCoord}px` }}
+          title={`Sisa waktu candle ${timeframe}: ${countdown}`}
+        >
+          {countdown}
+        </div>
+      )}
       <ChartDrawingOverlay
         chart={drawingApi.chart}
         series={drawingApi.series}

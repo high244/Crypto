@@ -1,4 +1,4 @@
-import { fetchAllKlines, fetchKlines, fetchTicker24h } from './binanceApi';
+import { fetchAllKlines, fetchKlines, fetchTicker24h } from './binanceApi.js';
 import {
   fetchAllFuturesKlines,
   fetchFuturesFundingRate,
@@ -6,15 +6,15 @@ import {
   fetchFuturesOpenInterest,
   fetchFuturesPremiumIndex,
   fetchFuturesTicker24h,
-} from './binanceFuturesApi';
+} from './binanceFuturesApi.js';
 import {
   fetchCoinMarketData,
   fetchDerivativeTicker,
   fetchOHLC,
   resolveCoinGeckoId,
   timeframeToDays,
-} from './coingeckoApi';
-import { fetchHyperliquidAssetContext, fetchHyperliquidCandles } from './hyperliquidApi';
+} from './coingeckoApi.js';
+import { fetchHyperliquidAssetContext, fetchHyperliquidCandles } from './hyperliquidApi.js';
 
 export const SOURCE_LABELS = {
   'binance-spot': 'Binance Spot',
@@ -27,7 +27,29 @@ export const SOURCE_LABELS = {
 
 export const LIVE_SOURCES = new Set(['binance-spot', 'binance-futures', 'hyperliquid']);
 
-const SOURCE_TIMEOUT_MS = 5_000;
+const SOURCE_TIMEOUT_MS = 2_000;
+
+const MARKET_DATA_CACHE = new Map();
+const CACHE_TTL_MS = 45_000; // 45 seconds fresh cache for instant transitions
+
+export function getCachedMarketData(symbol, timeframe, market) {
+  const key = `${String(symbol).toUpperCase()}_${timeframe}_${market}`;
+  const entry = MARKET_DATA_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp < CACHE_TTL_MS) {
+    return entry.data;
+  }
+  return null;
+}
+
+export function setCachedMarketData(symbol, timeframe, market, data) {
+  const key = `${String(symbol).toUpperCase()}_${timeframe}_${market}`;
+  MARKET_DATA_CACHE.set(key, { data, timestamp: Date.now() });
+}
+
+const HYPERLIQUID_PRIORITY_ASSETS = new Set([
+  'HYPE', 'PURR', 'AI16Z', 'POPCAT', 'JEFF', 'HFUN', 'PUMP', 'TRUMP', 'FARTCOIN', 'MELANIA', 'VIRTUAL'
+]);
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -88,7 +110,7 @@ function normalizeCandles(candles) {
 /** Convert the provider-neutral candle contract only at the chart boundary. */
 export function toChartCandles(candles) {
   return candles.map((candle) => ({
-    time: candle.date,
+    time: candle.date ?? candle.time,
     open: candle.open,
     high: candle.high,
     low: candle.low,
@@ -295,40 +317,78 @@ export class MarketDataUnavailableError extends Error {
  * { symbol, timeframe, candles:[{ date, open, high, low, close }],
  *   fundingRate?, openInterest?, source, fetchedAt }
  */
-export async function fetchMarketData({ symbol, timeframe, market, coinGeckoId, onAttempt, onProgress }) {
+export async function fetchMarketData({ symbol, timeframe, market, coinGeckoId, onAttempt, onProgress, bypassCache = false }) {
   const normalizedMarket = market === 'futures' ? 'futures' : 'spot';
-  const candidates = normalizedMarket === 'futures'
-    ? [
-      {
-        source: 'binance-futures',
-        load: (options) => loadBinanceFutures({ symbol, timeframe, onProgress, ...options }),
-      },
-      {
-        source: 'coingecko',
-        load: (options) => loadCoinGecko({ symbol, timeframe, market: normalizedMarket, coinGeckoId, ...options }),
-      },
+
+  if (!bypassCache) {
+    const cached = getCachedMarketData(symbol, timeframe, normalizedMarket);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const baseAsset = baseAssetFromSymbol(symbol);
+  const isHyperliquidNative = HYPERLIQUID_PRIORITY_ASSETS.has(baseAsset);
+
+  let candidates;
+  if (isHyperliquidNative) {
+    // Hyperliquid first for zero-delay instant DEX load
+    candidates = [
       {
         source: 'hyperliquid',
         load: (options) => loadHyperliquid({ symbol, timeframe, ...options }),
       },
-    ]
-    : [
       {
-        source: 'binance-spot',
-        load: (options) => loadBinanceSpot({ symbol, timeframe, onProgress, ...options }),
+        source: normalizedMarket === 'futures' ? 'binance-futures' : 'binance-spot',
+        load: (options) => normalizedMarket === 'futures'
+          ? loadBinanceFutures({ symbol, timeframe, onProgress, ...options })
+          : loadBinanceSpot({ symbol, timeframe, onProgress, ...options }),
       },
       {
         source: 'coingecko',
         load: (options) => loadCoinGecko({ symbol, timeframe, market: normalizedMarket, coinGeckoId, ...options }),
       },
     ];
+  } else if (normalizedMarket === 'futures') {
+    candidates = [
+      {
+        source: 'binance-futures',
+        load: (options) => loadBinanceFutures({ symbol, timeframe, onProgress, ...options }),
+      },
+      {
+        source: 'hyperliquid',
+        load: (options) => loadHyperliquid({ symbol, timeframe, ...options }),
+      },
+      {
+        source: 'coingecko',
+        load: (options) => loadCoinGecko({ symbol, timeframe, market: normalizedMarket, coinGeckoId, ...options }),
+      },
+    ];
+  } else {
+    candidates = [
+      {
+        source: 'binance-spot',
+        load: (options) => loadBinanceSpot({ symbol, timeframe, onProgress, ...options }),
+      },
+      {
+        source: 'hyperliquid',
+        load: (options) => loadHyperliquid({ symbol, timeframe, ...options }),
+      },
+      {
+        source: 'coingecko',
+        load: (options) => loadCoinGecko({ symbol, timeframe, market: normalizedMarket, coinGeckoId, ...options }),
+      },
+    ];
+  }
 
   const failures = [];
   for (const candidate of candidates) {
     onAttempt?.(candidate.source);
     try {
       const result = await attemptSource(SOURCE_LABELS[candidate.source], candidate.load);
-      return toUnifiedResult({ symbol, timeframe, source: candidate.source, result });
+      const unified = toUnifiedResult({ symbol, timeframe, source: candidate.source, result });
+      setCachedMarketData(symbol, timeframe, normalizedMarket, unified);
+      return unified;
     } catch (error) {
       failures.push({ source: candidate.source, reason: formatReason(error) });
     }
@@ -336,3 +396,60 @@ export async function fetchMarketData({ symbol, timeframe, market, coinGeckoId, 
 
   throw new MarketDataUnavailableError(symbol.toUpperCase(), normalizedMarket, failures);
 }
+
+/**
+ * Fetch a batch of older historical candles before earliestTime for infinite scrolling back.
+ */
+export async function fetchHistoricalBatch({
+  symbol,
+  timeframe,
+  market,
+  earliestTime,
+  activeSource,
+  limit = 500,
+  signal,
+}) {
+  if (!earliestTime) return [];
+  const tf = timeframe === 'all' ? '1d' : timeframe;
+  const endTime = Math.floor(earliestTime * 1000) - 1;
+
+  if (activeSource === 'binance-futures' || market === 'futures') {
+    try {
+      const rows = await fetchFuturesKlines(symbol, tf, limit, { endTime, signal });
+      return normalizeCandles(rows);
+    } catch {
+      try {
+        const coin = baseAssetFromSymbol(symbol);
+        const rows = await fetchHyperliquidCandles(coin, tf, { endTime, limit, signal });
+        return normalizeCandles(rows);
+      } catch {
+        return [];
+      }
+    }
+  }
+
+  if (activeSource === 'hyperliquid') {
+    try {
+      const coin = baseAssetFromSymbol(symbol);
+      const rows = await fetchHyperliquidCandles(coin, tf, { endTime, limit, signal });
+      return normalizeCandles(rows);
+    } catch {
+      return [];
+    }
+  }
+
+  // Default: Binance Spot
+  try {
+    const rows = await fetchKlines(symbol, tf, limit, { endTime, signal });
+    return normalizeCandles(rows);
+  } catch {
+    try {
+      const coin = baseAssetFromSymbol(symbol);
+      const rows = await fetchHyperliquidCandles(coin, tf, { endTime, limit, signal });
+      return normalizeCandles(rows);
+    } catch {
+      return [];
+    }
+  }
+}
+

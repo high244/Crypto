@@ -1,3 +1,44 @@
+import { useEffect, useState } from 'react';
+
+const TIMEFRAME_SECONDS = {
+  '1m': 60,
+  '5m': 5 * 60,
+  '15m': 15 * 60,
+  '1h': 3600,
+  '4h': 4 * 3600,
+  '1d': 86400,
+  '1w': 7 * 86400,
+  'all': 86400,
+};
+
+function useBarCountdown(timeframe = '1h') {
+  const [countdown, setCountdown] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      const tfSec = TIMEFRAME_SECONDS[timeframe] || 3600;
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = tfSec - (now % tfSec);
+
+      const hours = Math.floor(remaining / 3600);
+      const minutes = Math.floor((remaining % 3600) / 60);
+      const seconds = remaining % 60;
+
+      if (hours > 0) {
+        setCountdown(`${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+      } else {
+        setCountdown(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+      }
+    };
+
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [timeframe]);
+
+  return countdown;
+}
+
 function asNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -30,7 +71,7 @@ function formatFundingRate(rate) {
   return `${percentage >= 0 ? '+' : ''}${percentage.toFixed(decimals)}%`;
 }
 
-export default function TickerBar({ ticker, market, fundingRate, openInterest }) {
+export default function TickerBar({ ticker, market, timeframe = '1h', fundingRate, openInterest }) {
   const close = asNumber(ticker?.close);
   const change = asNumber(ticker?.change);
   const changePct = asNumber(ticker?.changePct);
@@ -39,12 +80,20 @@ export default function TickerBar({ ticker, market, fundingRate, openInterest })
   const arrow = isUp ? '▲' : '▼';
   const decimals = close === null ? 2 : close < 1 ? 6 : close < 100 ? 4 : 2;
   const fundingNumber = asNumber(fundingRate);
+  const countdown = useBarCountdown(timeframe);
 
   return (
     <div className="ticker-bar">
       <div className="ticker-price" style={{ color: close === null ? 'var(--text-muted)' : color }}>
         {formatNumber(close, decimals)}
       </div>
+
+      {countdown && (
+        <div className="ticker-countdown" title={`Sisa waktu sebelum candle ${timeframe} ditutup`}>
+          <span className="countdown-pulse" />
+          <span>Bar: {countdown}</span>
+        </div>
+      )}
 
       <div className="ticker-stat">
         <span className="ticker-stat-label">24h Change</span>

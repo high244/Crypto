@@ -25,8 +25,13 @@ export function parseCSVData(raw) {
       throw new Error(`Baris ${index + 1} punya nilai yang bukan angka.`);
     }
 
-    const time = Math.floor(new Date(date).getTime() / 1000);
-    if (!Number.isFinite(time)) {
+    let time = Number(date);
+    if (Number.isFinite(time) && time > 0) {
+      if (time > 1e11) time = Math.floor(time / 1000);
+    } else {
+      time = Math.floor(new Date(date).getTime() / 1000);
+    }
+    if (!Number.isFinite(time) || Number.isNaN(time)) {
       throw new Error(`Baris ${index + 1} punya tanggal yang tidak valid.`);
     }
 

@@ -1,5 +1,5 @@
 // Binance USDⓈ-M Futures public REST API. No API key is required.
-const BASE = import.meta.env.DEV
+const BASE = import.meta.env?.DEV
   ? '/binance-futures-api/fapi/v1'
   : 'https://fapi.binance.com/fapi/v1';
 
@@ -32,6 +32,8 @@ export async function fetchFuturesKlines(symbol, interval, limit = 500, options 
     interval,
     limit: String(limit),
   });
+  if (options.endTime) params.set('endTime', String(options.endTime));
+  if (options.startTime) params.set('startTime', String(options.startTime));
   const rows = await requestJson(`/klines?${params}`, options);
   return normalizeKlines(rows);
 }

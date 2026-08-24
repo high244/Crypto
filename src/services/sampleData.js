@@ -9,8 +9,8 @@ const INTERVAL_SECONDS = {
   all: 24 * 60 * 60,
 };
 
-function sampleBasePrice(symbol) {
-  const base = symbol.replace(/(USDT|USDC|USD)$/i, '');
+function sampleBasePrice(symbol = 'BTCUSDT') {
+  const base = String(symbol || 'BTCUSDT').replace(/(USDT|USDC|USD)$/i, '');
   return {
     BTC: 65_000,
     ETH: 3_400,
@@ -21,7 +21,7 @@ function sampleBasePrice(symbol) {
 }
 
 /** Deterministic illustrative candles for offline chart/indicator exploration. */
-export function createSampleCandles(symbol, timeframe, count = 160) {
+export function createSampleCandles(symbol = 'BTCUSDT', timeframe = '1h', count = 160) {
   const interval = INTERVAL_SECONDS[timeframe] || INTERVAL_SECONDS['1h'];
   const ending = Math.floor(Date.now() / 1000 / interval) * interval;
   const base = sampleBasePrice(symbol);

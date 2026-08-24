@@ -9,9 +9,14 @@ import AnalysisPanel from './components/AnalysisPanel';
 import { useMarketData } from './hooks/useMarketData';
 import { useChartDrawings } from './hooks/useChartDrawings';
 import { subscribeDepth, subscribeKline, subscribeTicker, subscribeTrades } from './services/binanceWebSocket';
-import { subscribeHyperliquidAssetContext, subscribeHyperliquidCandle } from './services/hyperliquidWebSocket';
+import {
+  subscribeHyperliquidAssetContext,
+  subscribeHyperliquidCandle,
+  subscribeHyperliquidDepth,
+  subscribeHyperliquidTrades,
+} from './services/hyperliquidWebSocket';
 import { parseCSVData } from './services/exchangeApi';
-import { baseAssetFromSymbol, SOURCE_LABELS, toChartCandles } from './services/marketData';
+import { baseAssetFromSymbol, fetchHistoricalBatch, LIVE_SOURCES, SOURCE_LABELS, toChartCandles } from './services/marketData';
 import { createSampleCandles } from './services/sampleData';
 
 function finiteNumber(value) {
@@ -166,6 +171,10 @@ export default function App() {
               : null,
           });
         }),
+        subscribeHyperliquidDepth(coin, setOrderBook),
+        subscribeHyperliquidTrades(coin, (trade) => {
+          setTrades((previous) => [trade, ...previous].slice(0, 100));
+        }),
       );
     }
 
@@ -225,6 +234,56 @@ export default function App() {
     resetLivePanels();
   }, [symbol, timeframe, resetLivePanels]);
 
+  const isFetchingHistoryRef = useRef(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+
+  // Reset pagination state when symbol, timeframe, or market changes
+  useEffect(() => {
+    setHasMoreHistory(true);
+    isFetchingHistoryRef.current = false;
+  }, [symbol, timeframe, market]);
+
+  const handleLoadMoreHistory = useCallback(async () => {
+    if (isManual || isFetchingHistoryRef.current || !hasMoreHistory || !chartData.length || !activeSource) {
+      return;
+    }
+    isFetchingHistoryRef.current = true;
+
+    try {
+      const earliestTime = chartData[0]?.time;
+      if (!earliestTime) return;
+
+      const olderRows = await fetchHistoricalBatch({
+        symbol,
+        timeframe,
+        market,
+        earliestTime,
+        activeSource,
+        limit: 1000,
+      });
+
+      if (!olderRows || olderRows.length === 0) {
+        setHasMoreHistory(false);
+        return;
+      }
+
+      const formattedOlder = toChartCandles(olderRows);
+      setChartData((previous) => {
+        const existingTimes = new Set(previous.map((c) => c.time));
+        const uniqueOlder = formattedOlder.filter((c) => !existingTimes.has(c.time));
+        if (uniqueOlder.length === 0) {
+          setHasMoreHistory(false);
+          return previous;
+        }
+        return [...uniqueOlder, ...previous].sort((a, b) => a.time - b.time);
+      });
+    } catch (err) {
+      console.warn('Load more history error:', err);
+    } finally {
+      isFetchingHistoryRef.current = false;
+    }
+  }, [activeSource, chartData, hasMoreHistory, isManual, market, symbol, timeframe]);
+
   const handleTimeframeChange = useCallback((nextTimeframe) => {
     if (nextTimeframe === timeframe) return;
     setTimeframe(nextTimeframe);
@@ -237,9 +296,7 @@ export default function App() {
   const visibleSource = manualFeed?.source || activeSource;
   const sourceLabel = SOURCE_LABELS[visibleSource] || '—';
   const displayError = !isManual ? liveError : '';
-  const hasBinancePanels = !isManual && (
-    activeSource === 'binance-spot' || activeSource === 'binance-futures'
-  );
+  const hasLivePanels = !isManual && LIVE_SOURCES.has(activeSource);
 
   return (
     <div className="app-layout">
@@ -265,6 +322,7 @@ export default function App() {
         <TickerBar
           ticker={ticker}
           market={market}
+          timeframe={timeframe}
           fundingRate={futuresMetrics.fundingRate}
           openInterest={futuresMetrics.openInterest}
         />
@@ -283,6 +341,9 @@ export default function App() {
           ref={chartRef}
           data={chartData}
           indicators={indicators}
+          symbol={symbol}
+          timeframe={timeframe}
+          onLoadMoreHistory={handleLoadMoreHistory}
           loading={!isManual && loading}
           loadingProgress={!isManual ? status : ''}
           emptyMessage={displayError ? 'Sumber live tidak tersedia. Buka Analysis → CSV untuk import atau tampilkan data contoh.' : ''}
@@ -321,11 +382,11 @@ export default function App() {
               onLoadCSV={handleLoadCSV}
               onLoadSample={handleLoadSample}
             />
-          ) : !hasBinancePanels ? (
+          ) : !hasLivePanels ? (
             <div className="market-panel-message">
               <div className="market-panel-message-icon">◫</div>
-              Order book dan trades hanya ditampilkan saat sumber aktif adalah Binance Spot/Futures.
-              <br />Chart tetap berjalan dengan {sourceLabel} bila tersedia.
+              Order book dan trades live tersedia untuk Binance Spot, Binance Futures, dan Hyperliquid DEX.
+              <br />Chart tetap berjalan dengan {sourceLabel}.
             </div>
           ) : rightTab === 'book' ? (
             <OrderBook data={orderBook} />

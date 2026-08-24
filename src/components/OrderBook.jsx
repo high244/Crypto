@@ -41,6 +41,18 @@ export default function OrderBook({ data }) {
     return v.toFixed(6);
   };
 
+  if (!bids.length && !asks.length) {
+    return (
+      <div className="orderbook" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>
+        <div className="spinner" style={{ marginBottom: '10px' }} />
+        <div style={{ fontSize: '12px', fontWeight: 600 }}>Menghubungkan Order Book...</div>
+        <div style={{ fontSize: '11px', marginTop: '6px', opacity: 0.75, maxWidth: '180px', lineHeight: '1.4' }}>
+          Tersedia live untuk <strong>Binance Spot</strong>, <strong>Binance Futures</strong>, dan <strong>Hyperliquid DEX</strong>.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="orderbook">
       <div className="orderbook-header">

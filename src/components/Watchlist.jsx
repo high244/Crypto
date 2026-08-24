@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { subscribeTicker } from '../services/binanceWebSocket';
+import { fetchTicker24h } from '../services/binanceApi';
 
 const POPULAR_PAIRS = [
   'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
@@ -11,15 +12,51 @@ const POPULAR_PAIRS = [
 export default function Watchlist({ activeSymbol, onSelect, market = 'spot' }) {
   const [tickers, setTickers] = useState({});
 
-  // Subscribe to mini tickers for all popular pairs
+  // 1. Initial REST snapshot + 2. Real-time WebSocket subscriptions
   useEffect(() => {
+    let cancelled = false;
+
+    // Load initial snapshot so prices appear instantly
+    POPULAR_PAIRS.forEach((pair) => {
+      fetchTicker24h(pair)
+        .then((data) => {
+          if (cancelled || !data?.lastPrice) return;
+          setTickers((prev) => {
+            // Only set if not already updated by WebSocket
+            if (prev[pair] && prev[pair]._ws) return prev;
+            return {
+              ...prev,
+              [pair]: {
+                symbol: pair,
+                close: parseFloat(data.lastPrice),
+                change: parseFloat(data.priceChange),
+                changePct: parseFloat(data.priceChangePercent),
+                high: parseFloat(data.highPrice),
+                low: parseFloat(data.lowPrice),
+                volume: parseFloat(data.volume),
+                _rest: true,
+              },
+            };
+          });
+        })
+        .catch(() => {});
+    });
+
+    // Subscribe to live WebSocket tick-by-tick stream
     const subs = POPULAR_PAIRS.map((pair) =>
       subscribeTicker(pair, (data) => {
-        setTickers((prev) => ({ ...prev, [pair]: data }));
+        if (cancelled) return;
+        setTickers((prev) => ({
+          ...prev,
+          [pair]: { ...data, _ws: true },
+        }));
       }, market)
     );
 
-    return () => subs.forEach((s) => s.close());
+    return () => {
+      cancelled = true;
+      subs.forEach((s) => s.close());
+    };
   }, [market]);
 
   return (
@@ -52,10 +89,10 @@ export default function Watchlist({ activeSymbol, onSelect, market = 'spot' }) {
               </div>
               <div className="watchlist-right">
                 <div className="watchlist-price" style={{ color: t ? color : 'var(--text-secondary)' }}>
-                  {t ? t.close.toFixed(decimals) : '—'}
+                  {t ? t.close.toFixed(decimals) : '…'}
                 </div>
                 <div className="watchlist-change" style={{ color }}>
-                  {t ? `${isUp ? '+' : ''}${t.changePct.toFixed(2)}%` : '—'}
+                  {t ? `${isUp ? '+' : ''}${t.changePct.toFixed(2)}%` : '…'}
                 </div>
               </div>
             </div>

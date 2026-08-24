@@ -1,6 +1,6 @@
-// Binance WebSocket service — connects directly (no CORS issues for WS)
-const SPOT_WS_BASE = 'wss://stream.binance.com:9443/ws';
-const FUTURES_WS_BASE = 'wss://fstream.binance.com/ws';
+// Binance WebSocket service — uses data-stream.binance.vision which is reachable without VPN/ISP blocks
+const SPOT_WS_BASE = 'wss://data-stream.binance.vision/ws';
+const FUTURES_WS_BASE = 'wss://data-stream.binance.vision/ws';
 
 /**
  * Creates a managed WebSocket connection with auto-reconnect.

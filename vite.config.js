@@ -13,7 +13,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/binance-api': {
-        target: 'https://api.binance.com',
+        target: 'https://data-api.binance.vision',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/binance-api/, ''),
         secure: true,
@@ -34,6 +34,12 @@ export default defineConfig({
         target: 'https://api.hyperliquid.xyz',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/hyperliquid-api/, ''),
+        secure: true,
+      },
+      '/dexscreener-api': {
+        target: 'https://api.dexscreener.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/dexscreener-api/, ''),
         secure: true,
       },
     },

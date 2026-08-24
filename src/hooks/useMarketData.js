@@ -1,25 +1,47 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchMarketData, SOURCE_LABELS } from '../services/marketData';
-
-const initialState = {
-  data: null,
-  activeSource: null,
-  error: '',
-  loading: true,
-  status: '',
-};
+import { fetchMarketData, getCachedMarketData, SOURCE_LABELS } from '../services/marketData';
 
 /**
- * The sole React entry point for live market requests. It owns provider
- * fallback, cancellation-by-request-version, source state, and retrying.
+ * The React entry point for live market requests with Instant SWR (Stale-While-Revalidate)
+ * and sub-100ms in-memory cache transitions.
  */
 export function useMarketData(symbol, timeframe, market, { coinGeckoId, enabled = true } = {}) {
-  const [state, setState] = useState(initialState);
+  const [state, setState] = useState(() => {
+    const cached = getCachedMarketData(symbol, timeframe, market);
+    if (cached) {
+      return {
+        data: cached,
+        activeSource: cached.source,
+        error: '',
+        loading: false,
+        status: '',
+      };
+    }
+    return {
+      data: null,
+      activeSource: null,
+      error: '',
+      loading: true,
+      status: 'Menyiapkan data pasar…',
+    };
+  });
+
   const requestVersion = useRef(0);
 
-  const refresh = useCallback(async ({ silent = false } = {}) => {
+  const refresh = useCallback(async ({ silent = false, bypassCache = false } = {}) => {
     const version = ++requestVersion.current;
-    if (!silent) {
+    const cached = !bypassCache ? getCachedMarketData(symbol, timeframe, market) : null;
+
+    if (cached) {
+      // Instant render from cache (0ms transition delay!)
+      setState({
+        data: cached,
+        activeSource: cached.source,
+        error: '',
+        loading: false,
+        status: '',
+      });
+    } else if (!silent) {
       setState((previous) => ({
         ...previous,
         activeSource: null,
@@ -27,8 +49,6 @@ export function useMarketData(symbol, timeframe, market, { coinGeckoId, enabled 
         loading: true,
         status: 'Menyiapkan data pasar…',
       }));
-    } else {
-      setState((previous) => ({ ...previous, error: '', status: 'Memperbarui data pasar…' }));
     }
 
     try {
@@ -37,6 +57,7 @@ export function useMarketData(symbol, timeframe, market, { coinGeckoId, enabled 
         timeframe,
         market,
         coinGeckoId,
+        bypassCache,
         onAttempt: (source) => {
           if (requestVersion.current !== version) return;
           setState((previous) => ({
@@ -66,8 +87,8 @@ export function useMarketData(symbol, timeframe, market, { coinGeckoId, enabled 
       if (requestVersion.current !== version) return null;
       setState((previous) => ({
         ...previous,
-        activeSource: null,
-        error: error.message || 'Gagal memuat data pasar.',
+        activeSource: previous.data ? previous.activeSource : null,
+        error: previous.data ? '' : (error.message || 'Gagal memuat data pasar.'),
         loading: false,
         status: '',
       }));

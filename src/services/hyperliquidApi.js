@@ -1,5 +1,5 @@
 // Hyperliquid's public info API is designed to be called from browser dApps.
-const INFO_URL = import.meta.env.DEV
+const INFO_URL = import.meta.env?.DEV
   ? '/hyperliquid-api/info'
   : 'https://api.hyperliquid.xyz/info';
 
@@ -48,9 +48,9 @@ export async function fetchHyperliquidCandles(coin, timeframe, options = {}) {
   const intervalMs = INTERVAL_MS[interval];
   if (!intervalMs) throw new Error(`Hyperliquid tidak mendukung timeframe ${timeframe}.`);
 
-  const endTime = Date.now();
-  const candleCount = timeframe === 'all' ? 5000 : 500;
-  const startTime = endTime - intervalMs * candleCount;
+  const endTime = Number(options.endTime) || Date.now();
+  const candleCount = Number(options.limit) || (timeframe === 'all' ? 5000 : 500);
+  const startTime = Number(options.startTime) || (endTime - intervalMs * candleCount);
   const rows = await postInfo({
     type: 'candleSnapshot',
     req: { coin, interval, startTime, endTime },
@@ -85,3 +85,29 @@ export async function fetchHyperliquidAssetContext(coin, options = {}) {
 
   return { asset: meta.universe[index], context: contexts[index] };
 }
+
+/**
+ * Fetch all tradable perpetual and spot symbols on Hyperliquid for autocomplete.
+ */
+let _hlSymbolsCache = null;
+export async function fetchHyperliquidSymbols(options = {}) {
+  if (_hlSymbolsCache) return _hlSymbolsCache;
+  try {
+    const payload = await postInfo({ type: 'meta' }, options);
+    const universe = payload?.universe || [];
+    _hlSymbolsCache = universe
+      .filter((asset) => !asset.isDelisted && asset.name)
+      .map((asset) => ({
+        symbol: `${asset.name.toUpperCase()}USDT`,
+        baseAsset: asset.name.toUpperCase(),
+        quoteAsset: 'USD',
+        maxLeverage: asset.maxLeverage,
+        source: 'hyperliquid',
+      }));
+    return _hlSymbolsCache;
+  } catch (error) {
+    console.warn('Hyperliquid symbols fetch failed:', error);
+    return [];
+  }
+}
+
